@@ -139,12 +139,23 @@ export default function App() {
         {sidebarOpen && (
           <aside
             style={{
-              width: 260,
-              flexShrink: 0,
-              borderRight: '1px solid #21262d',
-              padding: 8,
-              overflowY: 'auto',
-            }}
+             width: 260,
+             flexShrink: 0,
+             borderRight: '1px solid #21262d',
+             padding: 8,
+             overflowY: 'auto',
+             ...(window.innerWidth < 768
+    ? {
+        position: 'absolute' as const,
+        top: 49,
+        left: 0,
+        bottom: 0,
+        zIndex: 10,
+        background: '#0d1117',
+        boxShadow: '4px 0 12px rgba(0,0,0,0.5)',
+      }
+    : {}),
+}}
           >
             <LessonList
               lessons={lessons}
