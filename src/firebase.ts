@@ -20,7 +20,7 @@ const firebaseConfig = {
 
 /** Only these accounts may use the app. Mirror this list in Firestore rules. */
 export const ALLOWED_EMAILS = [
-  'you@example.com',
+  'john99ryan@gmail.com',
   'second@example.com',
 ];
 
