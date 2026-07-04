@@ -77,13 +77,13 @@ export const PY_LESSONS: Lesson[] = [
       'def occupancy_pct(sold, available):\n    # return the percentage\n    pass\n\nprint(occupancy_pct(90, 120))\n',
     expectedOutput: ['75.0'],
   },
-  {
+ {
     id: 'py-08-dicts',
     order: 27,
     title: 'Dictionaries',
     language: 'python',
     instructions:
-      'Python\u2019s answer to the JavaScript object is the DICTIONARY:\n\nguest = {\n    "name": "Alice",\n    "nights": 3,\n}\n\nAlmost identical — except the keys are quoted strings, and access uses square brackets instead of a dot:\n\nguest["name"]      # "Alice"\nguest["nights"]    # 3\n\n(Dot access like guest.name does NOT work on dicts — that\u2019s the JavaScript habit to unlearn here.)\n\nAdd or change entries by assigning to a key:\n\nguest["room"] = 204        # new key\nguest["nights"] = 4        # updated value\n\nAnd dicts pair perfectly with f-strings — one care point: use the OTHER quote style inside the braces so the quotes don\u2019t collide:\n\nprint(f"{guest['name']} is staying {guest['nights']} nights")\n\nDouble quotes outside, single quotes inside. (JavaScript objects needed no quotes at all in dot access, so this is new friction — everyone fumbles it once.)\n\nYOUR TASK\nCreate a dict room with keys "num" set to 204 and "rate" set to 219. Print, using an f-string:\n\nRoom 204 costs $219',
+      'Python\u2019s answer to the JavaScript object is the DICTIONARY:\n\nguest = {\n    "name": "Alice",\n    "nights": 3,\n}\n\nAlmost identical — except the keys are quoted strings, and access uses square brackets instead of a dot:\n\nguest["name"]      # "Alice"\nguest["nights"]    # 3\n\n(Dot access like guest.name does NOT work on dicts — that\u2019s the JavaScript habit to unlearn here.)\n\nAdd or change entries by assigning to a key:\n\nguest["room"] = 204        # new key\nguest["nights"] = 4        # updated value\n\nAnd dicts pair perfectly with f-strings — one care point: use the OTHER quote style inside the braces so the quotes don\u2019t collide:\n\nprint(f"{guest[\'name\']} is staying {guest[\'nights\']} nights")\n\nDouble quotes outside, single quotes inside. (JavaScript objects needed no quotes at all in dot access, so this is new friction — everyone fumbles it once.)\n\nYOUR TASK\nCreate a dict room with keys "num" set to 204 and "rate" set to 219. Print, using an f-string:\n\nRoom 204 costs $219',
     starterCode:
       '# create the room dict, then print with an f-string\n',
     expectedOutput: ['Room 204 costs $219'],
