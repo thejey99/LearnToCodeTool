@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import Editor from './Editor';
 import Terminal, { TerminalHandle } from './Terminal';
+import WebPreview, { WebPreviewHandle } from './WebPreview';
 import { runJS } from '../runners/jsRunner';
 import { runTS } from '../runners/tsRunner';
 import { runPython, warmupPython } from '../runners/pythonRunner';
@@ -41,13 +42,17 @@ export default function LessonView({
   const [running, setRunning] = useState(false);
   const [passed, setPassed] = useState(isCompleted);
   const [tab, setTab] = useState<MobileTab>('lesson');
+  const [webMsg, setWebMsg] = useState<string | null>(null);
   const termRef = useRef<TerminalHandle>(null);
+  const webRef = useRef<WebPreviewHandle>(null);
   const isMobile = useIsMobile();
+  const isWeb = lesson.kind === 'web';
 
   useEffect(() => {
     setCode(lesson.starterCode);
     setPassed(isCompleted);
     setTab('lesson');
+    setWebMsg(null);
     termRef.current?.clear();
     if (lesson.language === 'python') warmupPython();
   }, [lesson.id]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -73,11 +78,38 @@ export default function LessonView({
   }
 
   async function handleRun() {
-    const term = termRef.current;
-    if (!term || running) return;
-
+    if (running) return;
     setRunning(true);
     if (isMobile) setTab('output');
+
+    if (isWeb) {
+      setWebMsg(null);
+      const ok = await webRef.current?.run(code, lesson.webCheck);
+      if (lesson.webCheck) {
+        if (ok) {
+          setWebMsg('✔ Checks passed — assignment complete!');
+          if (!passed) {
+            setPassed(true);
+            onComplete(lesson.id);
+          }
+        } else {
+          setWebMsg('✘ Not quite yet — the check did not pass. Re-read the task and try again.');
+        }
+      } else {
+        if (!passed) {
+          setPassed(true);
+          onComplete(lesson.id);
+        }
+      }
+      setRunning(false);
+      return;
+    }
+
+    const term = termRef.current;
+    if (!term) {
+      setRunning(false);
+      return;
+    }
     term.clear();
     term.writeInfo('$ run ' + LANG_LABEL[lesson.language].toLowerCase());
     if (lesson.language === 'python') {
@@ -119,6 +151,7 @@ export default function LessonView({
     >
       <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 4 }}>
         {LANG_LABEL[lesson.language]}
+        {isWeb && ' · Web project'}
         {passed && <span style={{ color: '#3fb950' }}> · ✔ completed</span>}
       </div>
       <h2 style={{ margin: '0 0 12px', fontSize: 18 }}>{lesson.title}</h2>
@@ -169,20 +202,47 @@ export default function LessonView({
 
   const runButton = (
     <button onClick={handleRun} disabled={running} style={runBtnStyle(running)}>
-      {running ? 'Running…' : '▶ Run'}
+      {running ? 'Running…' : isWeb ? '▶ Run & Preview' : '▶ Run'}
     </button>
   );
 
-  // Terminal must stay mounted on mobile tab switches, so we hide rather than unmount
-  const terminalPanel = (visible: boolean) => (
+  // Output pane: iframe for web lessons, terminal otherwise.
+  // Both stay mounted on mobile tab switches (hidden, not unmounted).
+  const outputPanel = (visible: boolean) => (
     <div
       style={{
         height: '100%',
         minHeight: 0,
-        display: visible ? 'block' : 'none',
+        display: visible ? 'flex' : 'none',
+        flexDirection: 'column',
+        gap: 6,
       }}
     >
-      <Terminal ref={termRef} />
+      {isWeb ? (
+        <>
+          <div style={{ flex: 1, minHeight: 0 }}>
+            <WebPreview ref={webRef} />
+          </div>
+          {webMsg && (
+            <div
+              style={{
+                flexShrink: 0,
+                fontSize: 13,
+                padding: '6px 10px',
+                borderRadius: 6,
+                background: '#161b22',
+                color: webMsg.startsWith('✔') ? '#3fb950' : '#f85149',
+              }}
+            >
+              {webMsg}
+            </div>
+          )}
+        </>
+      ) : (
+        <div style={{ flex: 1, minHeight: 0 }}>
+          <Terminal ref={termRef} />
+        </div>
+      )}
     </div>
   );
 
@@ -207,16 +267,15 @@ export default function LessonView({
           }}
         >
           <div style={{ flex: '1 1 55%', minHeight: 0 }}>{editorPanel}</div>
-          <div style={{ alignSelf: 'flex-start' }}>{runButton}</div>
+          <div style={{ alignSelf: 'flex-start', width: 200 }}>{runButton}</div>
           <div style={{ flex: '1 1 40%', minHeight: 0 }}>
-            {terminalPanel(true)}
+            {outputPanel(true)}
           </div>
         </div>
       </div>
     );
   }
 
-  // ── Mobile: tabbed layout ──
   return (
     <div
       style={{
@@ -245,7 +304,7 @@ export default function LessonView({
               color: tab === t ? '#fff' : '#8b949e',
             }}
           >
-            {t}
+            {t === 'output' && isWeb ? 'preview' : t}
           </button>
         ))}
       </div>
@@ -265,7 +324,7 @@ export default function LessonView({
             <div style={{ flexShrink: 0 }}>{runButton}</div>
           </div>
         )}
-        {terminalPanel(tab === 'output')}
+        {outputPanel(tab === 'output')}
       </div>
     </div>
   );
