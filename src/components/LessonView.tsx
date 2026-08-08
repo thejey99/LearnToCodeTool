@@ -6,6 +6,7 @@ import TestResults from './TestResults';
 import Hints from './Hints';
 import Quiz from './Quiz';
 import { runLesson, warmupPython } from '../runners';
+import { buildReactDocument } from '../runners/reactRunner';
 import { Markdown } from '../lib/markdown';
 import { T, DIFFICULTY_COLOR, DIFFICULTY_LABEL, LANG_LABEL } from '../lib/theme';
 import { TRACK_BY_ID } from '../lessons/tracks';
@@ -58,6 +59,8 @@ export default function LessonView({
   const isMobile = useIsMobile();
 
   const isWeb = lesson.kind === 'web';
+  const isReact = lesson.kind === 'react';
+  const isPreview = isWeb || isReact;
   const isTests = lesson.kind === 'tests';
   const isQuiz = lesson.kind === 'quiz';
   const isReading = lesson.kind === 'reading';
@@ -104,9 +107,20 @@ export default function LessonView({
     if (isMobile) setTab('output');
 
     try {
-      if (isWeb) {
+      if (isPreview) {
         setWebMsg(null);
-        const ok = await webRef.current?.run(code, lesson.webCheck);
+
+        let document = code;
+        if (isReact) {
+          const built = await buildReactDocument(code);
+          if (built.error || built.html === null) {
+            setWebMsg('✘ ' + built.error);
+            return;
+          }
+          document = built.html;
+        }
+
+        const ok = await webRef.current?.run(document, lesson.webCheck);
         if (!lesson.webCheck) {
           markComplete();
         } else if (ok) {
@@ -290,6 +304,7 @@ export default function LessonView({
         value={code}
         onChange={updateCode}
         onRun={handleRun}
+        jsx={isReact}
       />
     </div>
   );
@@ -297,7 +312,7 @@ export default function LessonView({
   const controls = (
     <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
       <button onClick={handleRun} disabled={running} style={runButtonStyle(running)}>
-        {running ? 'Running…' : isWeb ? '▶ Run & Preview' : '▶ Run'}
+        {running ? 'Running…' : isPreview ? '▶ Run & Preview' : '▶ Run'}
       </button>
       <button
         onClick={() => updateCode(lesson.starterCode)}
@@ -327,7 +342,7 @@ export default function LessonView({
         gap: 6,
       }}
     >
-      {isWeb ? (
+      {isPreview ? (
         <>
           <div style={{ flex: 1, minHeight: 0 }}>
             <WebPreview ref={webRef} />
@@ -410,7 +425,7 @@ export default function LessonView({
               color: tab === t ? '#fff' : T.textDim,
             }}
           >
-            {t === 'output' ? (isWeb ? 'preview' : isTests ? 'tests' : 'output') : t}
+            {t === 'output' ? (isPreview ? 'preview' : isTests ? 'tests' : 'output') : t}
           </button>
         ))}
       </div>

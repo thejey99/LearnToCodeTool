@@ -107,6 +107,24 @@ export const TRACKS: Track[] = [
     ],
   },
   {
+    id: 'react',
+    title: 'React',
+    blurb: 'Components, props, state, effects and hooks — the real library, running live.',
+    rationale:
+      'React is what most front-end job adverts actually ask for. It is also the point where the previous track pays off: a component is state in and interface out, and hooks are the plumbing that makes it work. Every lesson here compiles your JSX and mounts real React in the preview.',
+    icon: '⚛️',
+    color: '#61dafb',
+    level: 'Intermediate',
+    requires: ['frontend'],
+    outcomes: [
+      'Build an interface from components and props',
+      'Manage state with useState and useReducer, updating immutably',
+      'Use useEffect correctly, including dependencies and cleanup',
+      'Extract reusable logic into custom hooks',
+      'Explain re-rendering, keys and stale closures under questioning',
+    ],
+  },
+  {
     id: 'games',
     title: 'Build Games',
     blurb: 'Clicker, Snake, Breakout and Memory Match — from an empty canvas.',

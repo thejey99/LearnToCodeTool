@@ -10,26 +10,34 @@ interface EditorProps {
   language: Language;
   value: string;
   onChange: (code: string) => void;
+  /** React lessons are JavaScript plus JSX, which needs its own parser. */
+  jsx?: boolean;
   /** Cmd/Ctrl+Enter, the shortcut every real editor binds to "run". */
   onRun?: () => void;
 }
 
-function languageExtension(language: Language) {
+function languageExtension(language: Language, jsx: boolean) {
   switch (language) {
     case 'python':
       return python();
     case 'sql':
       return sql();
     case 'typescript':
-      return javascript({ typescript: true });
+      return javascript({ typescript: true, jsx });
     case 'javascript':
     default:
-      return javascript();
+      return javascript({ jsx });
   }
 }
 
-export default function Editor({ language, value, onChange, onRun }: EditorProps) {
-  const extensions: Extension[] = [languageExtension(language)];
+export default function Editor({
+  language,
+  value,
+  onChange,
+  onRun,
+  jsx = false,
+}: EditorProps) {
+  const extensions: Extension[] = [languageExtension(language, jsx)];
 
   if (onRun) {
     // High precedence so it wins over CodeMirror's own Enter handling.

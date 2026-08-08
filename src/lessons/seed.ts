@@ -10,6 +10,7 @@ import { TS_PRO_LESSONS } from './ts-pro';
 import { ASYNC_LESSONS } from './async';
 import { TESTING_LESSONS } from './testing';
 import { FRONTEND_LESSONS } from './frontend';
+import { REACT_LESSONS } from './react';
 import { GAME_LESSONS } from './games';
 import { PY_LESSONS } from './py';
 import { PY_PRO_LESSONS } from './py-pro';
@@ -35,6 +36,7 @@ const CURRICULUM: Array<[TrackId, Lesson[]]> = [
   ['async', buildTrack('async', ASYNC_LESSONS)],
   ['testing', buildTrack('testing', TESTING_LESSONS)],
   ['frontend', buildTrack('frontend', FRONTEND_LESSONS)],
+  ['react', buildTrack('react', REACT_LESSONS)],
   ['games', augment(buildTrack('games', GAME_LESSONS, { module: 'Console Games' }), LEGACY_SUPPORT)],
   [
     'python',

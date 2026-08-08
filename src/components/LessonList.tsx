@@ -21,6 +21,7 @@ interface LessonListProps {
 const KIND_ICON: Record<string, string> = {
   tests: '🧪',
   web: '🖥️',
+  react: '⚛️',
   sql: '🗄️',
   quiz: '❓',
   reading: '📖',

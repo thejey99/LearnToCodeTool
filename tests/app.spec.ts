@@ -12,9 +12,17 @@ import { SEED_LESSONS } from '../src/lessons/seed';
 /** Seeds progress before the app boots, so tests can start from a known state. */
 async function seedProgress(
   page: Page,
-  savedCode: Record<string, string> = {}
+  savedCode: Record<string, string> = {},
+  lastLessonId: string | null = null
 ): Promise<void> {
-  await page.addInitScript((payload: { savedCode: Record<string, string> }) => {
+  await page.addInitScript((payload: {
+    savedCode: Record<string, string>;
+    lastLessonId: string | null;
+  }) => {
+    // This runs in every frame, including the sandboxed preview iframe where
+    // touching localStorage throws. Only the app's own frame matters.
+    if (window.origin === 'null') return;
+
     // Explore mode removes the sequential gating, so a test can open any lesson.
     localStorage.setItem('codelab.explore', 'true');
     localStorage.setItem(
@@ -22,7 +30,7 @@ async function seedProgress(
       JSON.stringify({
         version: 2,
         completedLessonIds: [],
-        lastLessonId: null,
+        lastLessonId: payload.lastLessonId,
         lessons: Object.fromEntries(
           Object.entries(payload.savedCode).map(([id, code]) => [
             id,
@@ -34,7 +42,7 @@ async function seedProgress(
         updatedAt: Date.now(),
       })
     );
-  }, { savedCode });
+  }, { savedCode, lastLessonId });
 }
 
 const lessonById = (id: string) => {
@@ -118,6 +126,26 @@ test('the solution stays locked until hints and attempts are spent', async ({ pa
 
   await page.getByRole('button', { name: /Give me a hint/ }).click();
   await expect(page.getByText('HINT 1')).toBeVisible();
+});
+
+test('a React lesson compiles JSX and mounts real React', async ({ page }) => {
+  const lesson = lessonById('react-01-components');
+  await seedProgress(page, { [lesson.id]: lesson.solution! }, lesson.id);
+  await page.goto('/');
+
+  await page.getByRole('button', { name: /Start learning|Continue/ }).click();
+  await expect(page.getByRole('heading', { name: lesson.title })).toBeVisible();
+
+  await page.getByRole('button', { name: '▶ Run & Preview' }).click();
+
+  // The React UMD builds are a lazy chunk, so the first run has to fetch them.
+  await expect(page.getByText('Checks passed')).toBeVisible({ timeout: 20_000 });
+
+  // And the component really rendered inside the preview iframe.
+  const preview = page.frameLocator('iframe[title="preview"]');
+  await expect(preview.getByRole('heading', { name: 'Hello, Ada!' })).toBeVisible();
+
+  await expect(page.getByText(/^1\/\d+$/)).toBeVisible();
 });
 
 test('the playground executes scratch code', async ({ page }) => {

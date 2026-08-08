@@ -56,6 +56,7 @@ for (const lesson of SEED_LESSONS) {
     lesson.kind === 'tests' ||
     lesson.kind === 'console' ||
     lesson.kind === 'web' ||
+    lesson.kind === 'react' ||
     lesson.kind === 'sql';
 
   if (graded && !lesson.solution) fail(lesson, 'no worked solution');
@@ -67,7 +68,9 @@ for (const lesson of SEED_LESSONS) {
   if (lesson.kind === 'console' && !lesson.expectedOutput) {
     fail(lesson, 'console lesson without expectedOutput');
   }
-  if (lesson.kind === 'web' && !lesson.webCheck) notes.push(`${lesson.id}: web lesson has no check`);
+  if ((lesson.kind === 'web' || lesson.kind === 'react') && !lesson.webCheck) {
+    notes.push(`${lesson.id}: preview lesson has no check`);
+  }
 
   for (const question of lesson.quiz ?? []) {
     if (
