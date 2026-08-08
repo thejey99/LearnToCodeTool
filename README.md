@@ -4,7 +4,7 @@ A browser-based curriculum that takes someone from `console.log("Hello")` to bei
 employable as a software developer. Every lesson runs real code in a sandbox — no
 setup, no toolchain, nothing to install.
 
-**113 lessons across 13 tracks.** Roughly 30 hours of material.
+**134 lessons across 13 tracks.** Roughly 36 hours of material.
 
 ```bash
 npm install
@@ -49,12 +49,12 @@ where an O(n) one passes. Learners see the difference rather than being told abo
 | --- | --- | --- |
 | 🧱 Programming Foundations | 12 | Variables, logic, loops, functions, arrays |
 | ⚡ JavaScript in Depth | 16 | Closures, map/filter/reduce, references, classes, errors, JSON |
-| 🛡️ TypeScript | 7 | Annotations, interfaces, unions, generics |
+| 🛡️ TypeScript | 16 | Interfaces, narrowing, discriminated unions, utility types, generics, `unknown` |
 | ⏳ Asynchronous JavaScript | 7 | Event loop, promises, concurrency, retries, race conditions |
 | 🧪 Testing & Debugging | 6 | Unit tests, TDD, edge cases, seams, reading a stack trace |
 | 🖥️ Front-End Engineering | 5 | DOM, delegation, state→render, loading/error/empty states |
 | 🎮 Build Games | 14 | Clicker, Snake, Breakout, Memory Match |
-| 🐍 Python | 9 | A second language, and why that makes the first one click |
+| 🐍 Python | 21 | A second language, then comprehensions, dataclasses, generators, pipelines |
 | 🗄️ Data & SQL | 7 | Real queries: filtering, aggregates, joins, indexes, N+1 |
 | 🧠 Data Structures & Algorithms | 12 | Big-O, hash maps, two pointers, windows, trees, graphs, DP |
 | 🔌 Back-End & APIs | 5 | HTTP, REST design, routing, validation, rate limiting |
@@ -116,13 +116,18 @@ be found by a learner losing an evening to it. So it is checked in CI-able form:
 npm run check      # typecheck + curriculum validation
 ```
 
-The validator runs **every** test-graded lesson's solution through the same harness the
-browser uses, replays every console lesson's solution against its expected output, and
-enforces structural rules — unique ids, hints and solutions present, quiz answers
-pointing at real choices. It caught two genuine content bugs on its first run.
+The validator:
 
-SQL and Python lessons are additionally verifiable against real SQLite and CPython;
-those checks live outside the default run because they need a Python interpreter.
+- runs **every** JavaScript and TypeScript test-graded solution through the same harness the browser uses
+- replays every console solution against its expected output
+- executes every Python lesson through a real CPython interpreter
+- runs every SQL lesson against real SQLite, comparing formatted output line for line
+- **type-checks every TypeScript solution with `tsc --strict`**, which the browser sandbox cannot do because it strips types rather than checking them
+- enforces structural rules — unique ids, hints and solutions present, quiz answers pointing at real choices
+
+It has caught three genuine content bugs so far, including a type error in a
+TypeScript lesson's own worked solution. The Python and SQL stages skip with a note
+when there is no `python3` on the path; everything else runs everywhere.
 
 ---
 

@@ -11,10 +11,19 @@
  *
  *   npm run validate
  */
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { transform } from 'sucrase';
 import { SEED_LESSONS, LESSONS_BY_TRACK } from '../src/lessons/seed';
 import { TRACKS } from '../src/lessons/tracks';
-import { JS_TEST_HARNESS } from '../src/runners/harness';
+import {
+  JS_TEST_HARNESS,
+  PY_TEST_HARNESS,
+  PY_TEST_FOOTER,
+  PY_RESULT_MARKER,
+} from '../src/runners/harness';
 import type { Lesson } from '../src/types';
 
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
@@ -169,6 +178,254 @@ const timed = await (async () => {
   return Date.now() - start;
 })();
 
+// ── Python solutions, through a real interpreter ─────────────
+
+/**
+ * Pyodide is CPython compiled to WASM, so a local python3 is a faithful
+ * enough stand-in for checking that lesson code and the test harness agree.
+ * Skipped with a note when no interpreter is available.
+ */
+function runPythonLessons(): number {
+  const lessons = SEED_LESSONS.filter(
+    (l) => l.language === 'python' && l.kind === 'tests'
+  );
+  if (lessons.length === 0) return 0;
+
+  try {
+    execFileSync('python3', ['--version'], { stdio: 'ignore' });
+  } catch {
+    notes.push(`python3 not available — skipped ${lessons.length} Python test lessons`);
+    return 0;
+  }
+
+  const dir = mkdtempSync(join(tmpdir(), 'codelab-py-'));
+  let checked = 0;
+
+  try {
+    for (const lesson of lessons) {
+      const source = [
+        PY_TEST_HARNESS,
+        lesson.solution ?? '',
+        lesson.testCode ?? '',
+        PY_TEST_FOOTER,
+      ].join('\n');
+
+      const file = join(dir, `${lesson.id.replace(/[^a-z0-9]/gi, '_')}.py`);
+      writeFileSync(file, source);
+
+      let stdout = '';
+      try {
+        stdout = execFileSync('python3', [file], {
+          encoding: 'utf8',
+          cwd: dir,
+          timeout: 30000,
+        });
+      } catch (err: any) {
+        const stderr = String(err?.stderr ?? err?.message ?? err).trim();
+        fail(lesson, `python raised: ${stderr.split('\n').pop()}`);
+        continue;
+      }
+
+      const line = stdout.split('\n').find((l) => l.includes(PY_RESULT_MARKER));
+      if (!line) {
+        fail(lesson, 'no test report produced');
+        continue;
+      }
+
+      const results: Array<{ name: string; passed: boolean; message?: string }> =
+        JSON.parse(line.slice(line.indexOf(PY_RESULT_MARKER) + PY_RESULT_MARKER.length));
+
+      if (results.length === 0) {
+        fail(lesson, 'no tests ran');
+        continue;
+      }
+      for (const result of results) {
+        if (!result.passed) {
+          fail(lesson, `"${result.name}" — ${result.message ?? 'failed'}`);
+        }
+      }
+      checked++;
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+
+  return checked;
+}
+
+const pythonChecked = runPythonLessons();
+
+// ── SQL solutions, against a real SQLite ─────────────────────
+
+/**
+ * Reproduces sqlRunner.ts — same statement splitting, same cell formatting —
+ * so a mismatch here means the lesson's expectedOutput is genuinely wrong
+ * rather than the harness disagreeing with itself.
+ */
+const SQL_DRIVER = `
+import json, sqlite3, sys
+
+def split(text):
+    out, cur, quote = [], "", None
+    for ch in text:
+        if quote:
+            cur += ch
+            if ch == quote:
+                quote = None
+        elif ch in ("'", '"'):
+            quote = ch
+            cur += ch
+        elif ch == ";":
+            out.append(cur); cur = ""
+        else:
+            cur += ch
+    out.append(cur)
+    return [s.strip() for s in out if s.strip() and not s.strip().startswith("--")]
+
+def cell(v):
+    if v is None:
+        return "NULL"
+    if isinstance(v, float):
+        s = ("%.4f" % v).rstrip("0").rstrip(".")
+        return s if s else "0"
+    return str(v)
+
+report = []
+for lesson in json.load(open(sys.argv[1])):
+    con = sqlite3.connect(":memory:")
+    con.executescript(lesson["setup"])
+    lines = []
+    try:
+        for stmt in split(lesson["sql"]):
+            cur = con.execute(stmt)
+            if cur.description:
+                lines.append(" | ".join(d[0] for d in cur.description))
+                for row in cur.fetchall():
+                    lines.append(" | ".join(cell(v) for v in row))
+    except Exception as e:
+        lines = ["ERROR " + type(e).__name__ + ": " + str(e)]
+    if lines != lesson["expected"]:
+        report.append({"id": lesson["id"], "expected": lesson["expected"], "actual": lines})
+
+print(json.dumps(report))
+`;
+
+function runSqlLessons(): number {
+  const lessons = SEED_LESSONS.filter((l) => l.kind === 'sql');
+  if (lessons.length === 0) return 0;
+
+  try {
+    execFileSync('python3', ['--version'], { stdio: 'ignore' });
+  } catch {
+    notes.push(`python3 not available — skipped ${lessons.length} SQL lessons`);
+    return 0;
+  }
+
+  const dir = mkdtempSync(join(tmpdir(), 'codelab-sql-'));
+
+  try {
+    const dataFile = join(dir, 'lessons.json');
+    const driverFile = join(dir, 'driver.py');
+    writeFileSync(
+      dataFile,
+      JSON.stringify(
+        lessons.map((l) => ({
+          id: l.id,
+          setup: l.sqlSetup ?? '',
+          sql: l.solution ?? '',
+          expected: l.expectedOutput ?? [],
+        }))
+      )
+    );
+    writeFileSync(driverFile, SQL_DRIVER);
+
+    const stdout = execFileSync('python3', [driverFile, dataFile], {
+      encoding: 'utf8',
+      timeout: 30000,
+    });
+
+    for (const problem of JSON.parse(stdout.trim())) {
+      fail(
+        `data/${problem.id}`,
+        `output mismatch\n        expected: ${JSON.stringify(problem.expected)}\n        actual:   ${JSON.stringify(problem.actual)}`
+      );
+    }
+  } catch (err: any) {
+    notes.push(`SQL check failed to run: ${String(err?.message ?? err).split('\n')[0]}`);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+
+  return lessons.length;
+}
+
+const sqlChecked = runSqlLessons();
+
+// ── TypeScript solutions, through the compiler ───────────────
+
+/**
+ * The browser sandbox strips types rather than checking them, so a type error
+ * in a lesson's own solution would ship silently. tsc catches it here instead.
+ * Each lesson becomes its own module so their declarations cannot collide.
+ */
+const TS_PRELUDE = `/* eslint-disable */
+declare function test(name: string, fn: () => unknown): void;
+declare const expect: (actual: any) => any;
+`;
+
+function typecheckTsLessons(): number {
+  const lessons = SEED_LESSONS.filter(
+    (l) => l.language === 'typescript' && (l.kind === 'tests' || l.kind === 'console')
+  );
+  if (lessons.length === 0) return 0;
+
+  const dir = mkdtempSync(join(tmpdir(), 'codelab-ts-'));
+  const files: string[] = [];
+
+  try {
+    for (const lesson of lessons) {
+      const file = join(dir, `${lesson.id.replace(/[^a-z0-9]/gi, '_')}.ts`);
+      writeFileSync(
+        file,
+        [TS_PRELUDE, lesson.solution ?? '', lesson.testCode ?? '', 'export {};'].join('\n')
+      );
+      files.push(file);
+    }
+
+    try {
+      execFileSync(
+        'npx',
+        [
+          'tsc',
+          '--noEmit',
+          '--strict',
+          '--target', 'ES2020',
+          '--lib', 'ES2020,DOM',
+          '--module', 'ESNext',
+          '--moduleResolution', 'bundler',
+          '--skipLibCheck',
+          ...files,
+        ],
+        { encoding: 'utf8', stdio: 'pipe' }
+      );
+    } catch (err: any) {
+      const output = String(err?.stdout ?? '') + String(err?.stderr ?? '');
+      for (const line of output.split('\n')) {
+        const match = /^(.*?)\((\d+),\d+\): error (.*)$/.exec(line.trim());
+        if (!match) continue;
+        const id = match[1].split('/').pop()?.replace(/\.ts$/, '') ?? 'unknown';
+        fail(`types/${id}`, `line ${match[2]}: ${match[3]}`);
+      }
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+
+  return lessons.length;
+}
+
+const tsChecked = typecheckTsLessons();
+
 // ── Report ───────────────────────────────────────────────────
 
 const byKind = SEED_LESSONS.reduce<Record<string, number>>((acc, l) => {
@@ -183,9 +440,10 @@ console.log(
       .map(([kind, count]) => `${kind}: ${count}`)
       .join('   ')
 );
-console.log(
-  `  verified ${testLessons.length} test-graded and ${consoleLessons.length} console solutions in ${timed}ms\n`
-);
+console.log(`  verified ${testLessons.length} test-graded and ${consoleLessons.length} console solutions in ${timed}ms`);
+console.log(`  ran ${pythonChecked} Python lessons through CPython`);
+console.log(`  ran ${sqlChecked} SQL lessons against real SQLite`);
+console.log(`  type-checked ${tsChecked} TypeScript solutions with tsc\n`);
 
 for (const note of notes) console.log(`  note: ${note}`);
 

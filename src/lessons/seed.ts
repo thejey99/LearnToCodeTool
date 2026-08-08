@@ -6,11 +6,13 @@ import { TRACKS, TRACK_BY_ID, TRACK_ORDER } from './tracks';
 import { JS_LESSONS } from './js';
 import { JS_DEEP_LESSONS } from './js-deep';
 import { TS_LESSONS } from './ts';
+import { TS_PRO_LESSONS } from './ts-pro';
 import { ASYNC_LESSONS } from './async';
 import { TESTING_LESSONS } from './testing';
 import { FRONTEND_LESSONS } from './frontend';
 import { GAME_LESSONS } from './games';
 import { PY_LESSONS } from './py';
+import { PY_PRO_LESSONS } from './py-pro';
 import { DATA_LESSONS } from './data';
 import { DSA_LESSONS } from './dsa';
 import { BACKEND_LESSONS } from './backend';
@@ -23,12 +25,24 @@ export { TRACKS, TRACK_BY_ID, TRACK_ORDER };
 const CURRICULUM: Array<[TrackId, Lesson[]]> = [
   ['foundations', augment(buildTrack('foundations', JS_LESSONS, { module: 'Programming Basics' }), LEGACY_SUPPORT)],
   ['js-deep', buildTrack('js-deep', JS_DEEP_LESSONS)],
-  ['types', augment(buildTrack('types', TS_LESSONS, { module: 'TypeScript Basics' }), LEGACY_SUPPORT)],
+  [
+    'types',
+    [
+      ...augment(buildTrack('types', TS_LESSONS, { module: 'TypeScript Basics' }), LEGACY_SUPPORT),
+      ...buildTrack('types', TS_PRO_LESSONS),
+    ],
+  ],
   ['async', buildTrack('async', ASYNC_LESSONS)],
   ['testing', buildTrack('testing', TESTING_LESSONS)],
   ['frontend', buildTrack('frontend', FRONTEND_LESSONS)],
   ['games', augment(buildTrack('games', GAME_LESSONS, { module: 'Console Games' }), LEGACY_SUPPORT)],
-  ['python', augment(buildTrack('python', PY_LESSONS, { module: 'Python Basics' }), LEGACY_SUPPORT)],
+  [
+    'python',
+    [
+      ...augment(buildTrack('python', PY_LESSONS, { module: 'Python Basics' }), LEGACY_SUPPORT),
+      ...buildTrack('python', PY_PRO_LESSONS),
+    ],
+  ],
   ['data', buildTrack('data', DATA_LESSONS)],
   ['dsa', buildTrack('dsa', DSA_LESSONS)],
   ['backend', buildTrack('backend', BACKEND_LESSONS)],
