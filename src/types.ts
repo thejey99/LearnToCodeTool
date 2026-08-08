@@ -8,10 +8,18 @@ export type Language = 'javascript' | 'typescript' | 'python' | 'sql';
  *  console — code runs in a worker, stdout is matched against expectedOutput
  *  tests   — code runs against a hidden/visible test suite (the real-world mode)
  *  web     — code is a full HTML document rendered live in an iframe
+ *  react   — code is JSX, compiled and mounted with the real React library
  *  sql     — code is SQL executed against an in-memory SQLite database
  *  quiz    — no code; a set of multiple-choice concept checks
  *  reading — no code; explanation only, completed by acknowledging  */
-export type LessonKind = 'console' | 'tests' | 'web' | 'sql' | 'quiz' | 'reading';
+export type LessonKind =
+  | 'console'
+  | 'tests'
+  | 'web'
+  | 'react'
+  | 'sql'
+  | 'quiz'
+  | 'reading';
 
 export interface TestResult {
   name: string;
@@ -49,6 +57,7 @@ export type TrackId =
   | 'dsa'
   | 'testing'
   | 'frontend'
+  | 'react'
   | 'backend'
   | 'craft'
   | 'interview'
@@ -103,7 +112,8 @@ export interface Lesson {
   /** tests lessons: source appended after the learner's code, using the
    *  test()/expect() harness injected by the runner. */
   testCode?: string;
-  /** web lessons: JS expression evaluated in the iframe after load. */
+  /** web and react lessons: JS expression evaluated in the iframe after load.
+   *  May return a promise, for checks that need to await an interaction. */
   webCheck?: string;
   /** sql lessons: schema + seed data executed before the learner's query. */
   sqlSetup?: string;

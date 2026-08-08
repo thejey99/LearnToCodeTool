@@ -244,7 +244,21 @@ def assert_raises(fn, exc=Exception, msg=None):
         raise AssertionFail("Expected " + exc.__name__ + " but got " + type(e).__name__ + ": " + str(e))
     raise AssertionFail(msg or ("Expected " + exc.__name__ + " to be raised, but nothing was"))
 
-def test(name, fn):
+def test(name, fn=None):
+    """Usable two ways.
+
+    test("name", lambda: assert_equal(f(1), 2))
+
+    @test("name")
+    def _():
+        assert_equal(f(1), 2)
+    """
+    if fn is None:
+        def _decorator(f):
+            test(name, f)
+            return f
+        return _decorator
+
     try:
         fn()
         __results.append({"name": str(name), "passed": True})
