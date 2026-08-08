@@ -6,11 +6,15 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "validate": "esbuild scripts/validate-curriculum.ts --bundle --platform=node --format=esm --target=node20 --outfile=node_modules/.cache/validate-curriculum.mjs --log-level=error && node node_modules/.cache/validate-curriculum.mjs",
+    "check": "npm run typecheck && npm run validate"
   },
   "dependencies": {
     "@codemirror/lang-javascript": "^6.2.2",
     "@codemirror/lang-python": "^6.1.6",
+    "@codemirror/lang-sql": "^6.10.0",
     "@uiw/react-codemirror": "^4.23.0",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0",

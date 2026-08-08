@@ -1,6 +1,6 @@
-import type { Lesson } from '../types';
+import type { LessonDraft } from '../types';
 
-export const GAME_LESSONS: Lesson[] = [
+export const GAME_LESSONS: LessonDraft[] = [
   // ══════════ GAME 1: Guess the Number (console) ══════════
   {
     id: 'game-guess-js',

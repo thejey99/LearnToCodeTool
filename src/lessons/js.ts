@@ -1,6 +1,6 @@
-import type { Lesson } from '../types';
+import type { LessonDraft } from '../types';
 
-export const JS_LESSONS: Lesson[] = [
+export const JS_LESSONS: LessonDraft[] = [
   {
     id: 'js-01-hello',
     order: 1,

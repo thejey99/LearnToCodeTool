@@ -1,8 +1,19 @@
 import { transform } from 'sucrase';
-import { runJS } from './jsRunner';
+import { runJS, type RunOptions } from './jsRunner';
 import type { RunResult } from '../types';
 
-export async function runTS(code: string): Promise<RunResult> {
+/**
+ * TypeScript is stripped to JavaScript before it reaches the sandbox.
+ *
+ * Note the honest limitation, which lessons in the Types track call out:
+ * this strips annotations, it does not type-check. Sucrase reports syntax
+ * errors only. Type errors are taught through the lesson text and tests
+ * rather than through a compiler.
+ */
+export async function runTS(
+  code: string,
+  opts: RunOptions = {}
+): Promise<RunResult> {
   let js: string;
   try {
     js = transform(code, { transforms: ['typescript'] }).code;
@@ -13,5 +24,16 @@ export async function runTS(code: string): Promise<RunResult> {
       durationMs: 0,
     };
   }
-  return runJS(js);
+
+  let testCode = opts.testCode;
+  if (testCode) {
+    try {
+      testCode = transform(testCode, { transforms: ['typescript'] }).code;
+    } catch {
+      // Test source is authored here, so a failure means a lesson bug,
+      // not a learner mistake. Fall through with the original text.
+    }
+  }
+
+  return runJS(js, { ...opts, testCode });
 }

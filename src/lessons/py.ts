@@ -1,6 +1,6 @@
-import type { Lesson } from '../types';
+import type { LessonDraft } from '../types';
 
-export const PY_LESSONS: Lesson[] = [
+export const PY_LESSONS: LessonDraft[] = [
   {
     id: 'py-01-hello',
     order: 20,
