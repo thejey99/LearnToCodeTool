@@ -9,19 +9,25 @@ import { SEED_LESSONS } from '../src/lessons/seed';
  * Runs against the app in local mode, since Firebase is optional.
  */
 
-/** Seeds progress before the app boots, so tests can start from a known state. */
-async function seedProgress(
-  page: Page,
-  savedCode: Record<string, string> = {},
-  lastLessonId: string | null = null
-): Promise<void> {
-  await page.addInitScript((payload: {
-    savedCode: Record<string, string>;
-    lastLessonId: string | null;
-  }) => {
+interface SeedOptions {
+  savedCode?: Record<string, string>;
+  lastLessonId?: string | null;
+  completed?: string[];
+  xp?: number;
+}
+
+/**
+ * Seeds progress before the app boots, so tests can start from a known state.
+ * Seeds once per browser context: a test that reloads should see what the app
+ * persisted, not a fresh copy of the fixture.
+ */
+async function seedProgress(page: Page, options: SeedOptions = {}): Promise<void> {
+  await page.addInitScript((payload: Required<SeedOptions>) => {
     // This runs in every frame, including the sandboxed preview iframe where
     // touching localStorage throws. Only the app's own frame matters.
     if (window.origin === 'null') return;
+    if (localStorage.getItem('codelab.test.seeded')) return;
+    localStorage.setItem('codelab.test.seeded', '1');
 
     // Explore mode removes the sequential gating, so a test can open any lesson.
     localStorage.setItem('codelab.explore', 'true');
@@ -29,7 +35,7 @@ async function seedProgress(
       'codelab.progress.v2',
       JSON.stringify({
         version: 2,
-        completedLessonIds: [],
+        completedLessonIds: payload.completed,
         lastLessonId: payload.lastLessonId,
         lessons: Object.fromEntries(
           Object.entries(payload.savedCode).map(([id, code]) => [
@@ -37,12 +43,17 @@ async function seedProgress(
             { attempts: 0, hintsUsed: 0, solutionViewed: false, savedCode: code },
           ])
         ),
-        xp: 0,
+        xp: payload.xp,
         streak: { current: 0, longest: 0, lastActiveDay: null },
         updatedAt: Date.now(),
       })
     );
-  }, { savedCode, lastLessonId });
+  }, {
+    savedCode: options.savedCode ?? {},
+    lastLessonId: options.lastLessonId ?? null,
+    completed: options.completed ?? [],
+    xp: options.xp ?? 0,
+  });
 }
 
 const lessonById = (id: string) => {
@@ -84,7 +95,7 @@ test('a console lesson runs typed code and records progress', async ({ page }) =
 
 test('a test-graded lesson reports every assertion', async ({ page }) => {
   const lesson = lessonById('jsd-01-scope');
-  await seedProgress(page, { [lesson.id]: lesson.solution! });
+  await seedProgress(page, { savedCode: { [lesson.id]: lesson.solution! } });
   await page.goto('/');
 
   await page.getByText('JavaScript in Depth').click();
@@ -103,7 +114,10 @@ test('a failing solution shows the assertion message rather than just failing', 
   const lesson = lessonById('jsd-04-map');
   // Deliberately wrong: no rounding, and it mutates nothing correctly.
   await seedProgress(page, {
-    [lesson.id]: 'function addTax(prices) {\n  return prices;\n}\n\nfunction fullNames(people) {\n  return [];\n}\n',
+    savedCode: {
+      [lesson.id]:
+        'function addTax(prices) {\n  return prices;\n}\n\nfunction fullNames(people) {\n  return [];\n}\n',
+    },
   });
   await page.goto('/');
 
@@ -130,7 +144,7 @@ test('the solution stays locked until hints and attempts are spent', async ({ pa
 
 test('a React lesson compiles JSX and mounts real React', async ({ page }) => {
   const lesson = lessonById('react-01-components');
-  await seedProgress(page, { [lesson.id]: lesson.solution! }, lesson.id);
+  await seedProgress(page, { savedCode: { [lesson.id]: lesson.solution! }, lastLessonId: lesson.id });
   await page.goto('/');
 
   await page.getByRole('button', { name: /Start learning|Continue/ }).click();
@@ -157,4 +171,37 @@ test('the playground executes scratch code', async ({ page }) => {
 
   await page.getByRole('button', { name: '▶ Run' }).click();
   await expect(page.locator('.xterm-rows')).toContainText('finished in');
+});
+
+test('resetting clears every trace of progress', async ({ page }) => {
+  await seedProgress(page, {
+    completed: ['js-01-hello', 'js-02-comments'],
+    xp: 30,
+    savedCode: { 'js-01-hello': 'console.log("mine");' },
+  });
+  await page.goto('/');
+
+  await expect(page.getByText(/^2\/\d+$/)).toBeVisible();
+  await expect(page.getByText('Lv 1 · 30 XP')).toBeVisible();
+
+  // Cancelling must be completely safe.
+  await page.getByRole('button', { name: 'Reset all progress' }).click();
+  await expect(page.getByText(/Delete all progress/)).toBeVisible();
+  await page.getByRole('button', { name: 'Cancel' }).click();
+  await expect(page.getByText(/^2\/\d+$/)).toBeVisible();
+
+  await page.getByRole('button', { name: 'Reset all progress' }).click();
+  await page.getByRole('button', { name: 'Yes, delete everything' }).click();
+
+  await expect(page.getByText(/^0\/\d+$/)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Start learning' })).toBeVisible();
+
+  // It has to be persisted, not just cleared in memory.
+  await page.reload();
+  await expect(page.getByText(/^0\/\d+$/)).toBeVisible();
+  await expect(page.getByText('Lv 1 · 0 XP')).toBeVisible();
+
+  // Saved editor drafts go too, so a restarted lesson really starts over.
+  await page.getByRole('button', { name: 'Start learning' }).click();
+  await expect(page.locator('.cm-content')).not.toContainText('mine');
 });

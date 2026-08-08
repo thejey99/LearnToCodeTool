@@ -4,6 +4,7 @@ import { watchAuth, signIn, signOut, isAllowed, REMOTE_ENABLED } from './firebas
 import {
   loadProgress,
   saveProgress,
+  emptyProgress,
   emptyLessonState,
   levelFor,
   touchStreak,
@@ -167,6 +168,14 @@ export default function App() {
 
   const handleViewSolution = (lessonId: string) =>
     patchLesson(lessonId, { solutionViewed: true }, true);
+
+  /** Wipes progress locally and, when configured, in Firestore too. */
+  function handleReset() {
+    persist(emptyProgress(), true);
+    setActiveLesson(null);
+    setActiveTrack('foundations');
+    setView('dashboard');
+  }
 
   function toggleExplore() {
     const next = !explore;
@@ -352,6 +361,7 @@ export default function App() {
               }}
               onContinue={handleContinue}
               onOpenPlayground={() => setView('playground')}
+              onReset={handleReset}
             />
           )}
 

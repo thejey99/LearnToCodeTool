@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { TrackId, UserProgress } from '../types';
 import { TRACKS } from '../lessons/tracks';
 import {
@@ -19,6 +20,7 @@ interface DashboardProps {
   onOpenTrack: (trackId: TrackId) => void;
   onContinue: () => void;
   onOpenPlayground: () => void;
+  onReset: () => void;
 }
 
 export default function Dashboard({
@@ -29,7 +31,9 @@ export default function Dashboard({
   onOpenTrack,
   onContinue,
   onOpenPlayground,
+  onReset,
 }: DashboardProps) {
+  const [confirmingReset, setConfirmingReset] = useState(false);
   const level = levelFor(progress.xp);
   const levelFloor = xpForLevel(level);
   const levelCeiling = xpForLevel(level + 1);
@@ -191,6 +195,57 @@ export default function Dashboard({
             );
           })}
         </div>
+
+        {/* Kept at the bottom, deliberately away from the primary actions —
+            this is not something to click by accident. */}
+        <div
+          style={{
+            marginTop: 32,
+            paddingTop: 18,
+            borderTop: `1px solid ${T.borderSoft}`,
+          }}
+        >
+          {confirmingReset ? (
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                flexWrap: 'wrap',
+                padding: '12px 14px',
+                borderRadius: 8,
+                background: T.redSoft,
+                border: `1px solid ${T.red}`,
+              }}
+            >
+              <span style={{ fontSize: 13, flex: 1, minWidth: 240 }}>
+                Delete all progress? This clears {done} completed{' '}
+                {done === 1 ? 'lesson' : 'lessons'}, {progress.xp} XP, your streak and
+                every saved snippet. It cannot be undone.
+              </span>
+              <button
+                onClick={() => {
+                  setConfirmingReset(false);
+                  onReset();
+                }}
+                style={dangerButton}
+              >
+                Yes, delete everything
+              </button>
+              <button onClick={() => setConfirmingReset(false)} style={ghostButton}>
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => setConfirmingReset(true)}
+              style={{ ...ghostButton, color: T.textDim, fontSize: 12.5 }}
+              title="Clear every lesson, all XP and your streak, and start from the beginning"
+            >
+              Reset all progress
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -232,6 +287,17 @@ const primaryButton: React.CSSProperties = {
   color: '#fff',
   fontWeight: 600,
   fontSize: 14,
+  cursor: 'pointer',
+};
+
+const dangerButton: React.CSSProperties = {
+  padding: '8px 14px',
+  borderRadius: 6,
+  border: 'none',
+  background: T.red,
+  color: '#fff',
+  fontWeight: 600,
+  fontSize: 13,
   cursor: 'pointer',
 };
 
