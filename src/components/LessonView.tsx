@@ -2,26 +2,29 @@ import { useEffect, useRef, useState } from 'react';
 import Editor from './Editor';
 import Terminal, { TerminalHandle } from './Terminal';
 import WebPreview, { WebPreviewHandle } from './WebPreview';
-import { runJS } from '../runners/jsRunner';
-import { runTS } from '../runners/tsRunner';
-import { runPython, warmupPython } from '../runners/pythonRunner';
-import type { Lesson, RunResult } from '../types';
+import TestResults from './TestResults';
+import Hints from './Hints';
+import Quiz from './Quiz';
+import { runLesson, warmupPython } from '../runners';
+import { Markdown } from '../lib/markdown';
+import { T, DIFFICULTY_COLOR, DIFFICULTY_LABEL, LANG_LABEL } from '../lib/theme';
+import { TRACK_BY_ID } from '../lessons/tracks';
+import type { Lesson, LessonState, RunResult, TestResult } from '../types';
 
 interface LessonViewProps {
   lesson: Lesson;
-  onComplete: (lessonId: string) => void;
+  state: LessonState;
   isCompleted: boolean;
+  onComplete: (lesson: Lesson, meta?: { quizScore?: number }) => void;
+  onAttempt: (lessonId: string) => void;
+  onSaveCode: (lessonId: string, code: string) => void;
+  onUseHint: (lessonId: string, count: number) => void;
+  onViewSolution: (lessonId: string) => void;
 }
-
-const LANG_LABEL: Record<string, string> = {
-  javascript: 'JavaScript',
-  typescript: 'TypeScript',
-  python: 'Python',
-};
 
 type MobileTab = 'lesson' | 'code' | 'output';
 
-function useIsMobile(breakpoint = 768): boolean {
+function useIsMobile(breakpoint = 900): boolean {
   const [isMobile, setIsMobile] = useState(
     typeof window !== 'undefined' ? window.innerWidth < breakpoint : false
   );
@@ -35,40 +38,57 @@ function useIsMobile(breakpoint = 768): boolean {
 
 export default function LessonView({
   lesson,
-  onComplete,
+  state,
   isCompleted,
+  onComplete,
+  onAttempt,
+  onSaveCode,
+  onUseHint,
+  onViewSolution,
 }: LessonViewProps) {
-  const [code, setCode] = useState(lesson.starterCode);
+  const [code, setCode] = useState(state.savedCode ?? lesson.starterCode);
   const [running, setRunning] = useState(false);
   const [passed, setPassed] = useState(isCompleted);
   const [tab, setTab] = useState<MobileTab>('lesson');
   const [webMsg, setWebMsg] = useState<string | null>(null);
+  const [tests, setTests] = useState<TestResult[]>([]);
+  const [runError, setRunError] = useState<string | null>(null);
   const termRef = useRef<TerminalHandle>(null);
   const webRef = useRef<WebPreviewHandle>(null);
   const isMobile = useIsMobile();
+
   const isWeb = lesson.kind === 'web';
+  const isTests = lesson.kind === 'tests';
+  const isQuiz = lesson.kind === 'quiz';
+  const isReading = lesson.kind === 'reading';
+  const isCodeLesson = !isQuiz && !isReading;
 
   useEffect(() => {
-    setCode(lesson.starterCode);
+    setCode(state.savedCode ?? lesson.starterCode);
     setPassed(isCompleted);
     setTab('lesson');
     setWebMsg(null);
+    setTests([]);
+    setRunError(null);
     termRef.current?.clear();
-    if (lesson.language === 'python') warmupPython();
-  }, [lesson.id]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (lesson.language === 'python' || lesson.language === 'sql') warmupPython();
+    // Deliberately keyed on the lesson only: re-running on every state change
+    // would throw away what the learner is typing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lesson.id]);
 
-  async function execute(): Promise<RunResult> {
-    switch (lesson.language) {
-      case 'python':
-        return runPython(code);
-      case 'typescript':
-        return runTS(code);
-      default:
-        return runJS(code);
-    }
+  function updateCode(next: string) {
+    setCode(next);
+    onSaveCode(lesson.id, next);
   }
 
-  function validate(result: RunResult): boolean {
+  function markComplete(meta?: { quizScore?: number }) {
+    if (passed) return;
+    setPassed(true);
+    onComplete(lesson, meta);
+  }
+
+  function validateStdout(result: RunResult): boolean {
     if (result.error) return false;
     if (!lesson.expectedOutput) return true;
     const actual = result.stdout.map((l) => l.trimEnd());
@@ -78,109 +98,178 @@ export default function LessonView({
   }
 
   async function handleRun() {
-    if (running) return;
+    if (running || !isCodeLesson) return;
     setRunning(true);
+    onAttempt(lesson.id);
     if (isMobile) setTab('output');
 
-    if (isWeb) {
-      setWebMsg(null);
-      const ok = await webRef.current?.run(code, lesson.webCheck);
-      if (lesson.webCheck) {
-        if (ok) {
-          setWebMsg('✔ Checks passed — assignment complete!');
-          if (!passed) {
-            setPassed(true);
-            onComplete(lesson.id);
-          }
+    try {
+      if (isWeb) {
+        setWebMsg(null);
+        const ok = await webRef.current?.run(code, lesson.webCheck);
+        if (!lesson.webCheck) {
+          markComplete();
+        } else if (ok) {
+          setWebMsg('✔ Checks passed — assignment complete.');
+          markComplete();
         } else {
-          setWebMsg('✘ Not quite yet — the check did not pass. Re-read the task and try again.');
+          setWebMsg(
+            '✘ The check did not pass yet. Re-read the task, and remember the page must work after a fresh load.'
+          );
         }
-      } else {
-        if (!passed) {
-          setPassed(true);
-          onComplete(lesson.id);
-        }
+        return;
       }
+
+      const result = await runLesson(lesson, code);
+
+      if (isTests) {
+        setTests(result.tests ?? []);
+        setRunError(result.error);
+        for (const line of result.stdout) termRef.current?.writeLine(line);
+        const all =
+          (result.tests?.length ?? 0) > 0 && result.tests!.every((t) => t.passed);
+        if (all) markComplete();
+        return;
+      }
+
+      // console + sql
+      const term = termRef.current;
+      if (!term) return;
+      term.clear();
+      term.writeInfo('$ run ' + LANG_LABEL[lesson.language].toLowerCase());
+      if (lesson.language === 'python' || lesson.language === 'sql') {
+        term.writeInfo('(the first run boots the engine; later runs are instant)');
+      }
+
+      for (const line of result.stdout) term.writeLine(line);
+      if (result.error) term.writeError(result.error);
+      term.writeInfo('— finished in ' + result.durationMs + 'ms —');
+
+      if (validateStdout(result)) {
+        markComplete();
+        if (lesson.expectedOutput) term.writeSuccess('✔ Output matches — lesson complete.');
+      } else if (lesson.expectedOutput && !result.error) {
+        term.writeError('✘ Output does not match the expected result yet.');
+      }
+    } finally {
       setRunning(false);
-      return;
     }
-
-    const term = termRef.current;
-    if (!term) {
-      setRunning(false);
-      return;
-    }
-    term.clear();
-    term.writeInfo('$ run ' + LANG_LABEL[lesson.language].toLowerCase());
-    if (lesson.language === 'python') {
-      term.writeInfo('(first Python run may take a few seconds to boot)');
-    }
-
-    const result = await execute();
-
-    for (const line of result.stdout) term.writeLine(line);
-    if (result.error) term.writeError(result.error);
-    term.writeInfo('— finished in ' + result.durationMs + 'ms —');
-
-    if (validate(result)) {
-      if (!passed) {
-        setPassed(true);
-        onComplete(lesson.id);
-      }
-      if (lesson.expectedOutput) {
-        term.writeSuccess('✔ Output matches — lesson complete!');
-      }
-    } else if (lesson.expectedOutput && !result.error) {
-      term.writeError('✘ Output does not match the expected result yet.');
-    }
-
-    setRunning(false);
   }
+
+  // ── Panels ─────────────────────────────────────────────────
+
+  const track = TRACK_BY_ID[lesson.track];
+
+  const header = (
+    <div style={{ marginBottom: 12 }}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          flexWrap: 'wrap',
+          fontSize: 11.5,
+          color: T.textDim,
+          marginBottom: 6,
+        }}
+      >
+        <span style={{ color: track.color }}>
+          {track.icon} {track.title}
+        </span>
+        <span>·</span>
+        <span>{lesson.module}</span>
+        <span
+          style={{
+            color: DIFFICULTY_COLOR[lesson.difficulty],
+            border: `1px solid ${DIFFICULTY_COLOR[lesson.difficulty]}55`,
+            borderRadius: 4,
+            padding: '1px 6px',
+          }}
+        >
+          {DIFFICULTY_LABEL[lesson.difficulty]}
+        </span>
+        <span>~{lesson.minutes} min</span>
+        {isTests && <span style={{ color: T.green }}>· test-graded</span>}
+        {passed && <span style={{ color: T.green }}>· ✔ completed</span>}
+      </div>
+      <h2 style={{ margin: 0, fontSize: 20, color: '#e6edf3' }}>{lesson.title}</h2>
+    </div>
+  );
 
   const instructionsPanel = (
     <div
       style={{
         overflowY: 'auto',
-        background: '#161b22',
+        background: T.panel,
         borderRadius: 8,
-        padding: 16,
-        color: '#c9d1d9',
+        padding: 18,
         height: '100%',
         boxSizing: 'border-box',
       }}
     >
-      <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 4 }}>
-        {LANG_LABEL[lesson.language]}
-        {isWeb && ' · Web project'}
-        {passed && <span style={{ color: '#3fb950' }}> · ✔ completed</span>}
-      </div>
-      <h2 style={{ margin: '0 0 12px', fontSize: 18 }}>{lesson.title}</h2>
-      <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.6, fontSize: 14 }}>
-        {lesson.instructions}
-      </div>
+      {header}
+      <Markdown source={lesson.instructions} />
+
       {lesson.expectedOutput && (
         <div style={{ marginTop: 16 }}>
-          <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 4 }}>
-            Expected output:
+          <div style={{ fontSize: 11, color: T.textDim, marginBottom: 4, fontWeight: 700 }}>
+            EXPECTED OUTPUT
           </div>
           <pre
             style={{
-              background: '#0d1117',
+              background: T.bg,
               padding: 10,
               borderRadius: 6,
-              fontSize: 13,
+              fontSize: 12.5,
               overflowX: 'auto',
+              fontFamily: T.mono,
+              border: `1px solid ${T.borderSoft}`,
             }}
           >
             {lesson.expectedOutput.join('\n')}
           </pre>
         </div>
       )}
-      {isMobile && (
+
+      {isCodeLesson && (
+        <Hints
+          hints={lesson.hints ?? []}
+          solution={lesson.solution}
+          language={lesson.language === 'sql' ? 'sql' : lesson.language}
+          attempts={state.attempts}
+          hintsUsed={state.hintsUsed}
+          solutionViewed={state.solutionViewed}
+          onUseHint={(count) => onUseHint(lesson.id, count)}
+          onViewSolution={() => onViewSolution(lesson.id)}
+        />
+      )}
+
+      {isReading && (
         <button
-          onClick={() => setTab('code')}
-          style={{ ...runBtnStyle(false), marginTop: 16 }}
+          onClick={() => markComplete()}
+          disabled={passed}
+          style={{
+            ...runButtonStyle(false),
+            marginTop: 20,
+            width: 'auto',
+            background: passed ? T.borderSoft : '#238636',
+          }}
         >
+          {passed ? '✔ Marked as read' : 'Mark as read'}
+        </button>
+      )}
+
+      {isQuiz && lesson.quiz && (
+        <div style={{ marginTop: 20 }}>
+          <Quiz
+            questions={lesson.quiz}
+            onFinish={(score) => markComplete({ quizScore: score })}
+          />
+        </div>
+      )}
+
+      {isMobile && isCodeLesson && (
+        <button onClick={() => setTab('code')} style={{ ...runButtonStyle(false), marginTop: 20 }}>
           Start coding →
         </button>
       )}
@@ -193,21 +282,41 @@ export default function LessonView({
         height: '100%',
         borderRadius: 8,
         overflow: 'hidden',
-        border: '1px solid #30363d',
+        border: `1px solid ${T.border}`,
       }}
     >
-      <Editor language={lesson.language} value={code} onChange={setCode} />
+      <Editor
+        language={lesson.language}
+        value={code}
+        onChange={updateCode}
+        onRun={handleRun}
+      />
     </div>
   );
 
-  const runButton = (
-    <button onClick={handleRun} disabled={running} style={runBtnStyle(running)}>
-      {running ? 'Running…' : isWeb ? '▶ Run & Preview' : '▶ Run'}
-    </button>
+  const controls = (
+    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+      <button onClick={handleRun} disabled={running} style={runButtonStyle(running)}>
+        {running ? 'Running…' : isWeb ? '▶ Run & Preview' : '▶ Run'}
+      </button>
+      <button
+        onClick={() => updateCode(lesson.starterCode)}
+        style={ghostButtonStyle}
+        title="Restore the starter code"
+      >
+        ↺ Reset
+      </button>
+      <span style={{ fontSize: 11.5, color: T.textFaint }}>
+        {navigator.platform.includes('Mac') ? '⌘' : 'Ctrl'}+Enter to run
+      </span>
+      {state.attempts > 0 && (
+        <span style={{ fontSize: 11.5, color: T.textFaint }}>
+          · {state.attempts} {state.attempts === 1 ? 'attempt' : 'attempts'}
+        </span>
+      )}
+    </div>
   );
 
-  // Output pane: iframe for web lessons, terminal otherwise.
-  // Both stay mounted on mobile tab switches (hidden, not unmounted).
   const outputPanel = (visible: boolean) => (
     <div
       style={{
@@ -228,16 +337,20 @@ export default function LessonView({
               style={{
                 flexShrink: 0,
                 fontSize: 13,
-                padding: '6px 10px',
+                padding: '7px 10px',
                 borderRadius: 6,
-                background: '#161b22',
-                color: webMsg.startsWith('✔') ? '#3fb950' : '#f85149',
+                background: T.panel,
+                color: webMsg.startsWith('✔') ? T.green : T.red,
               }}
             >
               {webMsg}
             </div>
           )}
         </>
+      ) : isTests ? (
+        <div style={{ flex: 1, minHeight: 0 }}>
+          <TestResults results={tests} error={runError} />
+        </div>
       ) : (
         <div style={{ flex: 1, minHeight: 0 }}>
           <Terminal ref={termRef} />
@@ -246,46 +359,39 @@ export default function LessonView({
     </div>
   );
 
+  // ── Layout ─────────────────────────────────────────────────
+
+  if (!isCodeLesson) {
+    return (
+      <div style={{ height: '100%', minHeight: 0, maxWidth: 860, margin: '0 auto' }}>
+        {instructionsPanel}
+      </div>
+    );
+  }
+
   if (!isMobile) {
     return (
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: 'minmax(280px, 1fr) 2fr',
+          gridTemplateColumns: 'minmax(320px, 5fr) 7fr',
           gap: 12,
           height: '100%',
           minHeight: 0,
         }}
       >
         {instructionsPanel}
-        <div
-          style={{
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 12,
-            minHeight: 0,
-          }}
-        >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, minHeight: 0 }}>
           <div style={{ flex: '1 1 55%', minHeight: 0 }}>{editorPanel}</div>
-          <div style={{ alignSelf: 'flex-start', width: 200 }}>{runButton}</div>
-          <div style={{ flex: '1 1 40%', minHeight: 0 }}>
-            {outputPanel(true)}
-          </div>
+          <div style={{ flexShrink: 0 }}>{controls}</div>
+          <div style={{ flex: '1 1 45%', minHeight: 0 }}>{outputPanel(true)}</div>
         </div>
       </div>
     );
   }
 
   return (
-    <div
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        height: '100%',
-        minHeight: 0,
-        gap: 8,
-      }}
-    >
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, gap: 8 }}>
       <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
         {(['lesson', 'code', 'output'] as MobileTab[]).map((t) => (
           <button
@@ -300,11 +406,11 @@ export default function LessonView({
               fontWeight: 600,
               textTransform: 'capitalize',
               cursor: 'pointer',
-              background: tab === t ? '#1f6feb' : '#21262d',
-              color: tab === t ? '#fff' : '#8b949e',
+              background: tab === t ? T.accent : T.borderSoft,
+              color: tab === t ? '#fff' : T.textDim,
             }}
           >
-            {t === 'output' && isWeb ? 'preview' : t}
+            {t === 'output' ? (isWeb ? 'preview' : isTests ? 'tests' : 'output') : t}
           </button>
         ))}
       </div>
@@ -312,16 +418,9 @@ export default function LessonView({
       <div style={{ flex: 1, minHeight: 0 }}>
         {tab === 'lesson' && instructionsPanel}
         {tab === 'code' && (
-          <div
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              height: '100%',
-              gap: 8,
-            }}
-          >
+          <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 8 }}>
             <div style={{ flex: 1, minHeight: 0 }}>{editorPanel}</div>
-            <div style={{ flexShrink: 0 }}>{runButton}</div>
+            <div style={{ flexShrink: 0 }}>{controls}</div>
           </div>
         )}
         {outputPanel(tab === 'output')}
@@ -330,16 +429,25 @@ export default function LessonView({
   );
 }
 
-function runBtnStyle(running: boolean): React.CSSProperties {
+function runButtonStyle(running: boolean): React.CSSProperties {
   return {
-    padding: '10px 24px',
+    padding: '9px 22px',
     borderRadius: 6,
     border: 'none',
-    background: running ? '#30363d' : '#238636',
+    background: running ? T.borderSoft : '#238636',
     color: '#fff',
     fontWeight: 600,
     fontSize: 14,
     cursor: running ? 'default' : 'pointer',
-    width: '100%',
   };
 }
+
+const ghostButtonStyle: React.CSSProperties = {
+  padding: '9px 14px',
+  borderRadius: 6,
+  border: `1px solid ${T.border}`,
+  background: 'transparent',
+  color: T.text,
+  fontSize: 13,
+  cursor: 'pointer',
+};

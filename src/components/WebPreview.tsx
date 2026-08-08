@@ -1,22 +1,16 @@
-import {
-  forwardRef,
-  useImperativeHandle,
-  useRef,
-  useState,
-} from 'react';
+import { forwardRef, useImperativeHandle, useRef, useState } from 'react';
+import { T } from '../lib/theme';
 
 export interface WebPreviewHandle {
-  /** Render the given HTML document and optionally run a check expression.
-      Resolves true if the check passes (or no check given). */
+  /** Render the HTML document and optionally evaluate a check expression.
+      Resolves true if the check passes (or when there is no check). */
   run: (html: string, check?: string) => Promise<boolean>;
 }
 
-const CHECK_TIMEOUT_MS = 1500;
+/** Some checks drive timers before answering, so they are allowed to be async. */
+const CHECK_TIMEOUT_MS = 6000;
 
-const WebPreview = forwardRef<WebPreviewHandle>(function WebPreview(
-  _props,
-  ref
-) {
+const WebPreview = forwardRef<WebPreviewHandle>(function WebPreview(_props, ref) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [status, setStatus] = useState<'idle' | 'pass' | 'fail'>('idle');
 
@@ -26,20 +20,30 @@ const WebPreview = forwardRef<WebPreviewHandle>(function WebPreview(
         const iframe = iframeRef.current;
         if (!iframe) return resolve(false);
 
-        const checkId = 'chk_' + Date.now();
+        const checkId = 'chk_' + Date.now() + '_' + Math.random().toString(36).slice(2);
 
+        // The check may return a boolean or a promise of one. Promise.resolve
+        // normalises both, so a lesson can wait for its own timers before
+        // reporting.
         const harness = check
           ? `<script>
               window.addEventListener('load', function () {
                 setTimeout(function () {
-                  var ok = false;
-                  try { ok = !!(function(){ return (${check}); })(); }
-                  catch (e) { ok = false; }
-                  parent.postMessage({ codeLabCheck: '${checkId}', ok: ok }, '*');
+                  var report = function (ok) {
+                    parent.postMessage({ codeLabCheck: '${checkId}', ok: !!ok }, '*');
+                  };
+                  try {
+                    Promise.resolve((function () { return (${check}); })())
+                      .then(report, function () { report(false); });
+                  } catch (e) {
+                    report(false);
+                  }
                 }, 300);
               });
             <\/script>`
           : '';
+
+        let timer: number | undefined;
 
         const onMessage = (e: MessageEvent) => {
           if (e.data?.codeLabCheck !== checkId) return;
@@ -49,14 +53,13 @@ const WebPreview = forwardRef<WebPreviewHandle>(function WebPreview(
           resolve(e.data.ok);
         };
 
-        let timer: number | undefined;
         if (check) {
           window.addEventListener('message', onMessage);
           timer = window.setTimeout(() => {
             window.removeEventListener('message', onMessage);
             setStatus('fail');
             resolve(false);
-          }, CHECK_TIMEOUT_MS + 2000);
+          }, CHECK_TIMEOUT_MS);
         } else {
           setStatus('idle');
         }
@@ -77,10 +80,10 @@ const WebPreview = forwardRef<WebPreviewHandle>(function WebPreview(
         overflow: 'hidden',
         border:
           status === 'pass'
-            ? '2px solid #3fb950'
+            ? `2px solid ${T.green}`
             : status === 'fail'
-              ? '2px solid #f85149'
-              : '1px solid #30363d',
+              ? `2px solid ${T.red}`
+              : `1px solid ${T.border}`,
         background: '#fff',
       }}
     >

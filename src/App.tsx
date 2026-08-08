@@ -1,27 +1,61 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { User } from 'firebase/auth';
-import { watchAuth, signIn, signOut, isAllowed } from './firebase';
-import { loadProgress, saveProgress } from './store/progress';
-import { SEED_LESSONS } from './lessons/seed';
+import { watchAuth, signIn, signOut, isAllowed, REMOTE_ENABLED } from './firebase';
+import {
+  loadProgress,
+  saveProgress,
+  emptyLessonState,
+  levelFor,
+  touchStreak,
+} from './store/progress';
+import {
+  SEED_LESSONS,
+  LESSON_BY_ID,
+  LESSONS_BY_TRACK,
+  nextLesson,
+  isLessonUnlocked,
+  TRACKS,
+} from './lessons/seed';
 import LessonList from './components/LessonList';
 import LessonView from './components/LessonView';
-import type { Lesson, UserProgress } from './types';
+import Dashboard from './components/Dashboard';
+import Playground from './components/Playground';
+import { T } from './lib/theme';
+import type { Lesson, TrackId, UserProgress } from './types';
 
 type AuthState = 'loading' | 'signedOut' | 'denied' | 'ready';
+type View = 'dashboard' | 'lesson' | 'playground';
+
+const EXPLORE_KEY = 'codelab.explore';
+const SAVE_DEBOUNCE_MS = 800;
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [authState, setAuthState] = useState<AuthState>('loading');
   const [progress, setProgress] = useState<UserProgress | null>(null);
+  const [view, setView] = useState<View>('dashboard');
+  const [activeTrack, setActiveTrack] = useState<TrackId>('foundations');
   const [activeLesson, setActiveLesson] = useState<Lesson | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
-
-  const lessons = useMemo(
-    () => [...SEED_LESSONS].sort((a, b) => a.order - b.order),
-    []
+  const [explore, setExplore] = useState(
+    () => localStorage.getItem(EXPLORE_KEY) === 'true'
   );
 
+  const saveTimer = useRef<number | undefined>(undefined);
+  const uid = user?.uid ?? 'local';
+
+  // ── Auth ─────────────────────────────────────────────────
   useEffect(() => {
+    // Without Firebase configured the app runs locally against localStorage,
+    // which keeps it usable straight after a clone.
+    if (!REMOTE_ENABLED) {
+      loadProgress('local').then((p) => {
+        setProgress(p);
+        setAuthState('ready');
+      });
+      return;
+    }
+
     return watchAuth(async (u) => {
       setUser(u);
       if (!u) {
@@ -36,43 +70,145 @@ export default function App() {
       }
       const p = await loadProgress(u.uid);
       setProgress(p);
-      const resume =
-        lessons.find((l) => l.id === p.lastLessonId) ?? lessons[0] ?? null;
-      setActiveLesson(resume);
+      const resume = p.lastLessonId ? LESSON_BY_ID.get(p.lastLessonId) : undefined;
+      if (resume) setActiveTrack(resume.track);
       setAuthState('ready');
     });
-  }, [lessons]);
+  }, []);
 
-  function handleSelect(lesson: Lesson) {
-    setActiveLesson(lesson);
-    if (user && progress) {
-      const next = { ...progress, lastLessonId: lesson.id };
+  // ── Persistence ──────────────────────────────────────────
+  const persist = useCallback(
+    (next: UserProgress, immediate = false) => {
       setProgress(next);
-      saveProgress(user.uid, next);
+      window.clearTimeout(saveTimer.current);
+      if (immediate) {
+        saveProgress(uid, next);
+      } else {
+        saveTimer.current = window.setTimeout(
+          () => saveProgress(uid, next),
+          SAVE_DEBOUNCE_MS
+        );
+      }
+    },
+    [uid]
+  );
+
+  useEffect(() => () => window.clearTimeout(saveTimer.current), []);
+
+  const completedIds = useMemo(
+    () => new Set(progress?.completedLessonIds ?? []),
+    [progress]
+  );
+
+  function stateFor(lessonId: string) {
+    return progress?.lessons[lessonId] ?? emptyLessonState();
+  }
+
+  function patchLesson(
+    lessonId: string,
+    changes: Partial<ReturnType<typeof emptyLessonState>>,
+    immediate = false
+  ) {
+    if (!progress) return;
+    const current = progress.lessons[lessonId] ?? emptyLessonState();
+    persist(
+      {
+        ...progress,
+        lessons: { ...progress.lessons, [lessonId]: { ...current, ...changes } },
+      },
+      immediate
+    );
+  }
+
+  // ── Lesson events ────────────────────────────────────────
+
+  function openLesson(lesson: Lesson) {
+    setActiveLesson(lesson);
+    setActiveTrack(lesson.track);
+    setView('lesson');
+    if (progress) {
+      persist({ ...progress, lastLessonId: lesson.id }, true);
     }
-    if (window.innerWidth < 768) setSidebarOpen(false);
+    if (window.innerWidth < 900) setSidebarOpen(false);
   }
 
-  function handleComplete(lessonId: string) {
-    if (!user || !progress) return;
-    if (progress.completedLessonIds.includes(lessonId)) return;
-    const next = {
-      ...progress,
-      completedLessonIds: [...progress.completedLessonIds, lessonId],
-    };
-    setProgress(next);
-    saveProgress(user.uid, next);
+  function handleComplete(lesson: Lesson, meta?: { quizScore?: number }) {
+    if (!progress || progress.completedLessonIds.includes(lesson.id)) return;
+
+    const current = progress.lessons[lesson.id] ?? emptyLessonState();
+    const withStreak = touchStreak(progress);
+
+    persist(
+      {
+        ...withStreak,
+        completedLessonIds: [...withStreak.completedLessonIds, lesson.id],
+        xp: withStreak.xp + lesson.xp,
+        lessons: {
+          ...withStreak.lessons,
+          [lesson.id]: {
+            ...current,
+            completedAt: Date.now(),
+            quizScore: meta?.quizScore ?? current.quizScore,
+          },
+        },
+      },
+      true
+    );
   }
 
-  if (authState === 'loading') {
-    return <Centered>Loading…</Centered>;
+  const handleAttempt = (lessonId: string) =>
+    patchLesson(lessonId, { attempts: stateFor(lessonId).attempts + 1 }, true);
+
+  const handleSaveCode = (lessonId: string, code: string) =>
+    patchLesson(lessonId, { savedCode: code });
+
+  const handleUseHint = (lessonId: string, count: number) =>
+    patchLesson(lessonId, { hintsUsed: count }, true);
+
+  const handleViewSolution = (lessonId: string) =>
+    patchLesson(lessonId, { solutionViewed: true }, true);
+
+  function toggleExplore() {
+    const next = !explore;
+    setExplore(next);
+    localStorage.setItem(EXPLORE_KEY, String(next));
   }
+
+  function handleContinue() {
+    const target =
+      (progress?.lastLessonId && !completedIds.has(progress.lastLessonId)
+        ? LESSON_BY_ID.get(progress.lastLessonId)
+        : undefined) ?? nextLesson(completedIds, explore) ?? SEED_LESSONS[0];
+    if (target) openLesson(target);
+  }
+
+  function goToNextLesson() {
+    if (!activeLesson) return;
+    const inTrack = LESSONS_BY_TRACK[activeLesson.track] ?? [];
+    const index = inTrack.findIndex((l) => l.id === activeLesson.id);
+    const candidate = inTrack[index + 1];
+    if (candidate && isLessonUnlocked(candidate, completedIds, explore)) {
+      openLesson(candidate);
+      return;
+    }
+    const anywhere = nextLesson(completedIds, explore);
+    if (anywhere) openLesson(anywhere);
+    else setView('dashboard');
+  }
+
+  // ── Gates ────────────────────────────────────────────────
+
+  if (authState === 'loading') return <Centered>Loading…</Centered>;
 
   if (authState === 'signedOut') {
     return (
       <Centered>
-        <h1 style={{ fontSize: 22, marginBottom: 16 }}>Code Lab</h1>
-        <button onClick={signIn} style={btnStyle}>
+        <h1 style={{ fontSize: 24, marginBottom: 4 }}>Code Lab</h1>
+        <p style={{ color: T.textDim, fontSize: 14, marginBottom: 20, maxWidth: 420, textAlign: 'center' }}>
+          {SEED_LESSONS.length} lessons across {TRACKS.length} tracks, from your first
+          line of code to interview preparation.
+        </p>
+        <button onClick={signIn} style={primaryButton}>
           Sign in with Google
         </button>
       </Centered>
@@ -83,15 +219,17 @@ export default function App() {
     return (
       <Centered>
         <p>This account does not have access.</p>
-        <button onClick={signOut} style={btnStyle}>
+        <button onClick={signOut} style={primaryButton}>
           Sign out
         </button>
       </Centered>
     );
   }
 
-  const completedIds = progress?.completedLessonIds ?? [];
-  const doneCount = completedIds.length;
+  if (!progress) return <Centered>Loading progress…</Centered>;
+
+  const doneCount = completedIds.size;
+  const showSidebar = view === 'lesson' && sidebarOpen;
 
   return (
     <div
@@ -99,84 +237,142 @@ export default function App() {
         display: 'flex',
         flexDirection: 'column',
         height: '100vh',
-        background: '#0d1117',
-        color: '#c9d1d9',
-        fontFamily:
-          "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+        background: T.bg,
+        color: T.text,
+        fontFamily: T.sans,
       }}
     >
-      {/* Top bar */}
       <header
         style={{
           display: 'flex',
           alignItems: 'center',
           gap: 12,
           padding: '10px 16px',
-          borderBottom: '1px solid #21262d',
+          borderBottom: `1px solid ${T.borderSoft}`,
           flexShrink: 0,
         }}
       >
+        {view === 'lesson' && (
+          <button
+            onClick={() => setSidebarOpen((s) => !s)}
+            style={iconButton}
+            aria-label="Toggle lesson list"
+          >
+            ☰
+          </button>
+        )}
+
         <button
-          onClick={() => setSidebarOpen((s) => !s)}
-          style={{ ...iconBtnStyle }}
-          aria-label="Toggle lesson list"
+          onClick={() => setView('dashboard')}
+          style={{ ...iconButton, border: 'none', fontWeight: 700, fontSize: 15 }}
         >
-          ☰
+          Code Lab
         </button>
-        <strong style={{ fontSize: 15 }}>Code Lab</strong>
-        <span style={{ fontSize: 12, color: '#8b949e' }}>
-          {doneCount}/{lessons.length} complete
+
+        <span style={{ fontSize: 12, color: T.textDim }}>
+          {doneCount}/{SEED_LESSONS.length}
         </span>
+        <span style={{ fontSize: 12, color: T.purple }}>
+          Lv {levelFor(progress.xp)} · {progress.xp} XP
+        </span>
+        {progress.streak.current > 0 && (
+          <span style={{ fontSize: 12, color: T.amber }}>
+            🔥 {progress.streak.current}
+          </span>
+        )}
+
         <div style={{ flex: 1 }} />
-        <span style={{ fontSize: 12, color: '#8b949e' }}>{user?.email}</span>
-        <button onClick={signOut} style={iconBtnStyle}>
-          Sign out
-        </button>
+
+        {view === 'lesson' && (
+          <button onClick={goToNextLesson} style={iconButton}>
+            Next lesson →
+          </button>
+        )}
+
+        {REMOTE_ENABLED ? (
+          <>
+            <span style={{ fontSize: 12, color: T.textDim }}>{user?.email}</span>
+            <button onClick={signOut} style={iconButton}>
+              Sign out
+            </button>
+          </>
+        ) : (
+          <span style={{ fontSize: 11.5, color: T.textFaint }} title="Set the Firebase env vars to sync across devices">
+            local progress
+          </span>
+        )}
       </header>
 
-      {/* Body */}
       <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
-        {sidebarOpen && (
+        {showSidebar && (
           <aside
             style={{
-             width: 260,
-             flexShrink: 0,
-             borderRight: '1px solid #21262d',
-             padding: 8,
-             overflowY: 'auto',
-             ...(window.innerWidth < 768
-    ? {
-        position: 'absolute' as const,
-        top: 49,
-        left: 0,
-        bottom: 0,
-        zIndex: 10,
-        background: '#0d1117',
-        boxShadow: '4px 0 12px rgba(0,0,0,0.5)',
-      }
-    : {}),
-}}
+              width: 280,
+              flexShrink: 0,
+              borderRight: `1px solid ${T.borderSoft}`,
+              padding: 8,
+              overflowY: 'auto',
+              ...(window.innerWidth < 900
+                ? {
+                    position: 'absolute' as const,
+                    top: 49,
+                    left: 0,
+                    bottom: 0,
+                    zIndex: 10,
+                    background: T.bg,
+                    boxShadow: '4px 0 12px rgba(0,0,0,0.5)',
+                  }
+                : {}),
+            }}
           >
             <LessonList
-              lessons={lessons}
+              trackId={activeTrack}
               completedIds={completedIds}
               activeLessonId={activeLesson?.id ?? null}
-              onSelect={handleSelect}
+              explore={explore}
+              onSelect={openLesson}
+              onBack={() => setView('dashboard')}
             />
           </aside>
         )}
 
-        <main style={{ flex: 1, minWidth: 0, padding: 12 }}>
-          {activeLesson ? (
-            <LessonView
-              key={activeLesson.id}
-              lesson={activeLesson}
-              onComplete={handleComplete}
-              isCompleted={completedIds.includes(activeLesson.id)}
+        <main style={{ flex: 1, minWidth: 0, padding: 12, minHeight: 0 }}>
+          {view === 'dashboard' && (
+            <Dashboard
+              progress={progress}
+              completedIds={completedIds}
+              explore={explore}
+              onToggleExplore={toggleExplore}
+              onOpenTrack={(trackId) => {
+                setActiveTrack(trackId);
+                const lessons = LESSONS_BY_TRACK[trackId] ?? [];
+                const target =
+                  lessons.find((l) => !completedIds.has(l.id)) ?? lessons[0];
+                if (target) openLesson(target);
+              }}
+              onContinue={handleContinue}
+              onOpenPlayground={() => setView('playground')}
             />
-          ) : (
-            <Centered>Select a lesson to begin.</Centered>
           )}
+
+          {view === 'playground' && <Playground onBack={() => setView('dashboard')} />}
+
+          {view === 'lesson' &&
+            (activeLesson ? (
+              <LessonView
+                key={activeLesson.id}
+                lesson={activeLesson}
+                state={stateFor(activeLesson.id)}
+                isCompleted={completedIds.has(activeLesson.id)}
+                onComplete={handleComplete}
+                onAttempt={handleAttempt}
+                onSaveCode={handleSaveCode}
+                onUseHint={handleUseHint}
+                onViewSolution={handleViewSolution}
+              />
+            ) : (
+              <Centered>Pick a lesson to begin.</Centered>
+            ))}
         </main>
       </div>
     </div>
@@ -192,8 +388,9 @@ function Centered({ children }: { children: React.ReactNode }) {
         flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
-        background: '#0d1117',
-        color: '#c9d1d9',
+        background: T.bg,
+        color: T.text,
+        fontFamily: T.sans,
         gap: 8,
       }}
     >
@@ -202,7 +399,7 @@ function Centered({ children }: { children: React.ReactNode }) {
   );
 }
 
-const btnStyle: React.CSSProperties = {
+const primaryButton: React.CSSProperties = {
   padding: '10px 20px',
   borderRadius: 6,
   border: 'none',
@@ -213,12 +410,12 @@ const btnStyle: React.CSSProperties = {
   cursor: 'pointer',
 };
 
-const iconBtnStyle: React.CSSProperties = {
+const iconButton: React.CSSProperties = {
   padding: '6px 10px',
   borderRadius: 6,
-  border: '1px solid #30363d',
+  border: `1px solid ${T.border}`,
   background: 'transparent',
-  color: '#c9d1d9',
+  color: T.text,
   fontSize: 13,
   cursor: 'pointer',
 };

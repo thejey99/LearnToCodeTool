@@ -1,6 +1,6 @@
-import type { Lesson } from '../types';
+import type { LessonDraft } from '../types';
 
-export const TS_LESSONS: Lesson[] = [
+export const TS_LESSONS: LessonDraft[] = [
   {
     id: 'ts-01-what-is-ts',
     order: 13,
