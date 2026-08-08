@@ -129,6 +129,35 @@ It has caught three genuine content bugs so far, including a type error in a
 TypeScript lesson's own worked solution. The Python and SQL stages skip with a note
 when there is no `python3` on the path; everything else runs everywhere.
 
+### Browser tests
+
+Web lessons are graded against a live DOM, so verifying them needs a real browser:
+
+```bash
+npm run test:e2e     # Playwright
+npm run check:all    # everything above, plus the browser suite
+```
+
+Two suites:
+
+**`tests/web-lessons.spec.ts`** checks every `web` lesson twice, using the same
+harness `WebPreview.tsx` injects. The worked solution must satisfy the check, **and
+the starter code must not** — a check that already passes before the learner writes
+anything grades nothing at all.
+
+**`tests/app.spec.ts`** drives the real app: the dashboard renders without a backend,
+typing into CodeMirror and pressing Run grades a console lesson and moves the progress
+counter, a test-graded lesson reports per-assertion results, a deliberately wrong
+solution surfaces the assertion message, the solution stays locked until hints and
+attempts are spent, and the playground executes scratch code.
+
+If the machine already has a Chromium — most CI images do — point at it instead of
+downloading one:
+
+```bash
+PLAYWRIGHT_CHROMIUM_EXECUTABLE=/path/to/chromium npm run test:e2e
+```
+
 ---
 
 ## Configuration

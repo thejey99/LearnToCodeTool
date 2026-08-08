@@ -9,7 +9,9 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "validate": "esbuild scripts/validate-curriculum.ts --bundle --platform=node --format=esm --target=node20 --outfile=node_modules/.cache/validate-curriculum.mjs --log-level=error && node node_modules/.cache/validate-curriculum.mjs",
-    "check": "npm run typecheck && npm run validate"
+    "check": "npm run typecheck && npm run validate",
+    "test:e2e": "playwright test",
+    "check:all": "npm run check && npm run test:e2e"
   },
   "dependencies": {
     "@codemirror/lang-javascript": "^6.2.2",
@@ -24,6 +26,7 @@
     "sucrase": "^3.35.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",
