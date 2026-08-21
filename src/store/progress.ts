@@ -1,17 +1,21 @@
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db, REMOTE_ENABLED } from '../firebase';
-import type { LessonState, UserProgress } from '../types';
+import type { LessonState, ReviewState, UserProgress } from '../types';
 
+// The key is deliberately unchanged across versions: normalise() upgrades
+// older records in place, so nobody loses progress to a schema bump.
 const LOCAL_KEY = 'codelab.progress.v2';
 
 export function emptyProgress(): UserProgress {
   return {
-    version: 2,
+    version: 3,
     completedLessonIds: [],
     lastLessonId: null,
     lessons: {},
     xp: 0,
     streak: { current: 0, longest: 0, lastActiveDay: null },
+    review: {},
+    conceptStats: {},
     updatedAt: 0,
   };
 }
@@ -20,7 +24,7 @@ export function emptyLessonState(): LessonState {
   return { attempts: 0, hintsUsed: 0, solutionViewed: false };
 }
 
-/** Accepts either shape and always returns a v2 record. */
+/** Accepts a v1, v2 or v3 record and always returns a v3 one. */
 function normalise(data: any): UserProgress {
   const base = emptyProgress();
   if (!data || typeof data !== 'object') return base;
@@ -49,8 +53,33 @@ function normalise(data: any): UserProgress {
     if (!lessons[id]) lessons[id] = { ...emptyLessonState(), attempts: 1, completedAt: data.updatedAt ?? Date.now() };
   }
 
+  // v3 added review scheduling. A v1 or v2 record simply arrives with no
+  // review history, which is the correct starting state anyway.
+  const review: Record<string, ReviewState> = {};
+  if (data.review && typeof data.review === 'object') {
+    for (const [id, raw] of Object.entries<any>(data.review)) {
+      review[id] = {
+        box: Number(raw?.box) || 0,
+        dueAt: Number(raw?.dueAt) || 0,
+        lastReviewedAt: Number(raw?.lastReviewedAt) || 0,
+        correct: Number(raw?.correct) || 0,
+        incorrect: Number(raw?.incorrect) || 0,
+      };
+    }
+  }
+
+  const conceptStats: Record<string, { correct: number; incorrect: number }> = {};
+  if (data.conceptStats && typeof data.conceptStats === 'object') {
+    for (const [concept, raw] of Object.entries<any>(data.conceptStats)) {
+      conceptStats[concept] = {
+        correct: Number(raw?.correct) || 0,
+        incorrect: Number(raw?.incorrect) || 0,
+      };
+    }
+  }
+
   return {
-    version: 2,
+    version: 3,
     completedLessonIds: completed,
     lastLessonId: data.lastLessonId ?? null,
     lessons,
@@ -60,6 +89,8 @@ function normalise(data: any): UserProgress {
       longest: Number(data?.streak?.longest) || 0,
       lastActiveDay: data?.streak?.lastActiveDay ?? null,
     },
+    review,
+    conceptStats,
     updatedAt: Number(data.updatedAt) || 0,
   };
 }

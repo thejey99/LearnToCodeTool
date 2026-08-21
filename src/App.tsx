@@ -21,11 +21,14 @@ import LessonList from './components/LessonList';
 import LessonView from './components/LessonView';
 import Dashboard from './components/Dashboard';
 import Playground from './components/Playground';
+import Review from './components/Review';
+import { REVIEW_BANK } from './review/bank';
+import { buildSession, recordAnswer } from './review/scheduler';
 import { T } from './lib/theme';
-import type { Lesson, TrackId, UserProgress } from './types';
+import type { Lesson, ReviewItem, TrackId, UserProgress } from './types';
 
 type AuthState = 'loading' | 'signedOut' | 'denied' | 'ready';
-type View = 'dashboard' | 'lesson' | 'playground';
+type View = 'dashboard' | 'lesson' | 'playground' | 'review';
 
 const EXPLORE_KEY = 'codelab.explore';
 const SAVE_DEBOUNCE_MS = 800;
@@ -41,6 +44,7 @@ export default function App() {
   const [explore, setExplore] = useState(
     () => localStorage.getItem(EXPLORE_KEY) === 'true'
   );
+  const [session, setSession] = useState<ReviewItem[]>([]);
 
   const saveTimer = useRef<number | undefined>(undefined);
   const uid = user?.uid ?? 'local';
@@ -168,6 +172,20 @@ export default function App() {
 
   const handleViewSolution = (lessonId: string) =>
     patchLesson(lessonId, { solutionViewed: true }, true);
+
+  // ── Review ───────────────────────────────────────────────
+
+  function startReview() {
+    if (!progress) return;
+    setSession(buildSession(REVIEW_BANK, progress, completedIds));
+    setView('review');
+  }
+
+  /** Scheduling state is small and worth never losing, so it saves at once. */
+  function handleReviewAnswer(item: ReviewItem, wasCorrect: boolean) {
+    if (!progress) return;
+    persist(recordAnswer(progress, item, wasCorrect), true);
+  }
 
   /** Wipes progress locally and, when configured, in Firestore too. */
   function handleReset() {
@@ -361,11 +379,24 @@ export default function App() {
               }}
               onContinue={handleContinue}
               onOpenPlayground={() => setView('playground')}
+              onStartReview={startReview}
               onReset={handleReset}
             />
           )}
 
           {view === 'playground' && <Playground onBack={() => setView('dashboard')} />}
+
+          {view === 'review' && (
+            <Review
+              items={session}
+              onAnswer={handleReviewAnswer}
+              onFinish={() => setView('dashboard')}
+              onOpenLesson={(lessonId) => {
+                const lesson = LESSON_BY_ID.get(lessonId);
+                if (lesson) openLesson(lesson);
+              }}
+            />
+          )}
 
           {view === 'lesson' &&
             (activeLesson ? (

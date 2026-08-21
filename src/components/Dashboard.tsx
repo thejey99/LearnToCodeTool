@@ -3,13 +3,14 @@ import type { TrackId, UserProgress } from '../types';
 import { TRACKS } from '../lessons/tracks';
 import {
   LESSONS_BY_TRACK,
-  TOTAL_MINUTES,
   SEED_LESSONS,
   isTrackUnlocked,
   trackCompletion,
   TRACK_UNLOCK_RATIO,
 } from '../lessons/seed';
 import { levelFor, xpForLevel } from '../store/progress';
+import { REVIEW_BANK } from '../review/bank';
+import { dueCount, weakConcepts } from '../review/scheduler';
 import { T } from '../lib/theme';
 
 interface DashboardProps {
@@ -20,6 +21,7 @@ interface DashboardProps {
   onOpenTrack: (trackId: TrackId) => void;
   onContinue: () => void;
   onOpenPlayground: () => void;
+  onStartReview: () => void;
   onReset: () => void;
 }
 
@@ -31,6 +33,7 @@ export default function Dashboard({
   onOpenTrack,
   onContinue,
   onOpenPlayground,
+  onStartReview,
   onReset,
 }: DashboardProps) {
   const [confirmingReset, setConfirmingReset] = useState(false);
@@ -44,6 +47,8 @@ export default function Dashboard({
 
   const done = completedIds.size;
   const total = SEED_LESSONS.length;
+  const due = dueCount(REVIEW_BANK, progress, completedIds);
+  const weak = weakConcepts(progress);
 
   return (
     <div style={{ height: '100%', overflowY: 'auto', padding: '4px 4px 40px' }}>
@@ -65,9 +70,9 @@ export default function Dashboard({
             sub={`best ${progress.streak.longest}`}
           />
           <Stat
-            label="Curriculum length"
-            value={`~${Math.round(TOTAL_MINUTES / 60)}h`}
-            sub={`${TRACKS.length} tracks`}
+            label="Due for review"
+            value={String(due)}
+            sub={due === 0 ? 'nothing right now' : due === 1 ? 'item' : 'items'}
           />
         </div>
 
@@ -96,6 +101,17 @@ export default function Dashboard({
           <button onClick={onContinue} style={primaryButton}>
             {done === 0 ? 'Start learning' : 'Continue where I left off'}
           </button>
+          <button
+            onClick={onStartReview}
+            style={{
+              ...ghostButton,
+              borderColor: due > 0 ? T.purple : T.border,
+              color: due > 0 ? T.purple : T.text,
+            }}
+            title="Spaced repetition over the lessons you have already finished"
+          >
+            🔁 Review{due > 0 ? ` (${due})` : ''}
+          </button>
           <button onClick={onOpenPlayground} style={ghostButton}>
             🧪 Playground
           </button>
@@ -111,6 +127,31 @@ export default function Dashboard({
             {explore ? '🔓 Explore mode on' : '🔒 Guided order'}
           </button>
         </div>
+
+        {weak.length > 0 && (
+          <div
+            style={{
+              marginBottom: 20,
+              padding: '12px 14px',
+              borderRadius: 8,
+              background: T.amberSoft,
+              borderLeft: `3px solid ${T.amber}`,
+              fontSize: 13.5,
+            }}
+          >
+            <strong>Worth another look.</strong> Review keeps catching you on{' '}
+            {weak.map((entry, i) => (
+              <span key={entry.concept}>
+                {i > 0 && (i === weak.length - 1 ? ' and ' : ', ')}
+                <code style={{ fontFamily: T.mono, color: T.amber }}>{entry.concept}</code>
+              </span>
+            ))}
+            .{' '}
+            <span style={{ color: T.textDim }}>
+              These come round more often until they stick.
+            </span>
+          </div>
+        )}
 
         {/* Tracks */}
         <div

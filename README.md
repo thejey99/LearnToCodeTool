@@ -63,6 +63,28 @@ where an O(n) one passes. Learners see the difference rather than being told abo
 | 🛠️ Working as an Engineer | 7 | Git, code review, security, clean code, system design |
 | 🎯 Interview Preparation | 6 | Classic problems under test, plus the non-coding rounds |
 
+## Review
+
+Finishing a lesson is not the same as remembering it. Review is a spaced-repetition
+layer over everything you have already completed.
+
+- **Scheduling is the point.** Get an item right and the gap before you see it again
+  grows — 1 day, 3, 7, 16, 35, 90. Get it wrong and it drops back to the start and
+  returns in your next session, the way a lapsed card does in any real SRS.
+- **Two retrieval formats.** Multiple choice recycles the ~90 checkpoint questions
+  already in the curriculum, with the options reshuffled so you cannot remember the
+  answer by position. *Predict the output* shows a snippet and asks you to type what
+  it prints — recall rather than recognition, which is the harder and more durable of
+  the two.
+- **Interleaved.** A session mixes tracks rather than blocking one topic, because
+  working out *which* idea applies is the part you actually need later.
+- **Only what you have finished.** Items unlock with their lesson, so review never
+  spoils material you have not reached.
+- **Weak concepts are named.** Miss the same concept twice and the dashboard says so.
+
+Items are assembled, not authored twice: every checkpoint question in the curriculum
+becomes a review item automatically, so the bank grows as the curriculum does.
+
 Tracks unlock when their prerequisites are 60% done. **Explore mode** (on the
 dashboard) removes the gating entirely for anyone who would rather jump straight
 to the topic they need.
@@ -85,6 +107,10 @@ src/
     pythonRunner.ts     Pyodide in a persistent worker, globals reset per run
     sqlRunner.ts        SQLite via Python's stdlib, fresh database per run
     reactRunner.ts      JSX via Sucrase + React 18 UMD, loaded as a lazy chunk
+  review/
+    scheduler.ts        Leitner scheduling, session assembly, answer grading
+    bank.ts             Assembles review items from the curriculum's own quizzes
+    predict-items.ts    The typed-recall snippets
   lessons/
     tracks.ts           Track metadata and prerequisites
     builder.ts          Fills in xp/time/kind from difficulty
@@ -140,10 +166,13 @@ The validator:
 - executes every Python lesson through a real CPython interpreter
 - runs every SQL lesson against real SQLite, comparing formatted output line for line
 - **type-checks every TypeScript solution with `tsc --strict`**, which the browser sandbox cannot do because it strips types rather than checking them
+- **executes every review snippet** and checks its declared output against what the code really prints, in both JavaScript and CPython
+- checks the review scheduler's own invariants — intervals grow on success, a miss resets, the grader is whitespace-forgiving but not order-blind
 - enforces structural rules — unique ids, hints and solutions present, quiz answers pointing at real choices
 
-It has caught three genuine content bugs so far, including a type error in a
-TypeScript lesson's own worked solution. The Python and SQL stages skip with a note
+It has caught six genuine content bugs so far, including a type error in a
+TypeScript lesson's own worked solution and three review items whose declared output
+did not match what the snippet printed. The Python and SQL stages skip with a note
 when there is no `python3` on the path; everything else runs everywhere.
 
 ### Browser tests
