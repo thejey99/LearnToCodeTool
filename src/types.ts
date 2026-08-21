@@ -152,6 +152,47 @@ export interface LessonDraft {
   order?: number;
 }
 
+// ── Review ───────────────────────────────────────────────────
+
+/** How a review item asks you to retrieve the answer.
+ *  mcq     — recognition: pick from shuffled choices
+ *  predict — recall: type what the snippet prints  */
+export type ReviewItemKind = 'mcq' | 'predict';
+
+export interface ReviewItem {
+  id: string;
+  kind: ReviewItemKind;
+  /** The lesson this draws on. An item is only served once that lesson is
+   *  complete, so review never spoils material you have not reached. */
+  lessonId: string;
+  /** Markdown. */
+  prompt: string;
+  /** Shown after answering, right or wrong — this is where the teaching is. */
+  explanation: string;
+  concepts: string[];
+
+  /** mcq */
+  choices?: string[];
+  answerIndex?: number;
+
+  /** predict */
+  code?: string;
+  language?: Language;
+  /** The lines the snippet prints, in order. */
+  expected?: string[];
+}
+
+/** Per-item spacing state. Cards are scheduled individually, the way any
+ *  spaced-repetition system does it. */
+export interface ReviewState {
+  /** Index into the interval ladder. 0 = newly learned or just missed. */
+  box: number;
+  dueAt: number;
+  lastReviewedAt: number;
+  correct: number;
+  incorrect: number;
+}
+
 // ── Progress ─────────────────────────────────────────────────
 
 export interface LessonState {
@@ -174,11 +215,15 @@ export interface StreakState {
 }
 
 export interface UserProgress {
-  version: 2;
+  version: 3;
   completedLessonIds: string[];
   lastLessonId: string | null;
   lessons: Record<string, LessonState>;
   xp: number;
   streak: StreakState;
+  /** Spacing state, keyed by review item id. */
+  review: Record<string, ReviewState>;
+  /** Running tally per concept tag, so weak areas can be named. */
+  conceptStats: Record<string, { correct: number; incorrect: number }>;
   updatedAt: number;
 }

@@ -16,7 +16,9 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { transform } from 'sucrase';
-import { SEED_LESSONS, LESSONS_BY_TRACK } from '../src/lessons/seed';
+import { SEED_LESSONS, LESSONS_BY_TRACK, LESSON_BY_ID } from '../src/lessons/seed';
+import { REVIEW_BANK, shuffledChoices } from '../src/review/bank';
+import { grade, matchesExpected, newReviewState } from '../src/review/scheduler';
 import { TRACKS } from '../src/lessons/tracks';
 import {
   JS_TEST_HARNESS,
@@ -429,6 +431,188 @@ function typecheckTsLessons(): number {
 
 const tsChecked = typecheckTsLessons();
 
+// ── Review bank ──────────────────────────────────────────────
+
+/**
+ * A review item that lies about its own answer is worse than no review item:
+ * it teaches the wrong thing, with confidence, on a schedule. Every predict
+ * item is therefore executed and its expected output compared against what
+ * the code really prints.
+ */
+async function validateReviewBank(): Promise<number> {
+  const seenIds = new Set<string>();
+
+  for (const item of REVIEW_BANK) {
+    const label = `review/${item.id}`;
+
+    if (seenIds.has(item.id)) fail(label, 'duplicate review item id');
+    seenIds.add(item.id);
+
+    if (!LESSON_BY_ID.has(item.lessonId)) {
+      fail(label, `references a lesson that does not exist: ${item.lessonId}`);
+    }
+    if (!item.explanation.trim()) fail(label, 'no explanation');
+    if (item.concepts.length === 0) fail(label, 'no concept tags');
+
+    if (item.kind === 'mcq') {
+      const choices = item.choices ?? [];
+      if (choices.length < 2) fail(label, 'fewer than two choices');
+      if ((item.answerIndex ?? -1) < 0 || (item.answerIndex ?? 0) >= choices.length) {
+        fail(label, 'answerIndex out of range');
+      }
+      // Shuffling must move the answer with it, not just the text.
+      for (const seed of [1, 42, 9001]) {
+        const shuffled = shuffledChoices(item, seed);
+        if (shuffled.choices[shuffled.answerIndex] !== choices[item.answerIndex ?? 0]) {
+          fail(label, `shuffle lost the correct answer at seed ${seed}`);
+        }
+      }
+    }
+
+    if (item.kind === 'predict') {
+      if (!item.code?.trim()) fail(label, 'no code');
+      if (!item.expected?.length) fail(label, 'no expected output');
+      // The grader trims trailing blank lines so a stray newline in the
+      // textarea is forgiven, which makes a blank expected line impossible
+      // to type. Snippets must print something visible on every line —
+      // use repr() or JSON.stringify to show an empty string.
+      if (item.expected?.some((line) => line.trim() === '')) {
+        fail(label, 'expected output contains a blank line, which cannot be graded');
+      }
+    }
+  }
+
+  // Execute the JavaScript and TypeScript predict items for real.
+  const jsPredict = REVIEW_BANK.filter(
+    (i) => i.kind === 'predict' && (i.language === 'javascript' || i.language === 'typescript')
+  );
+
+  for (const item of jsPredict) {
+    let code = item.code ?? '';
+    if (item.language === 'typescript') {
+      code = transform(code, { transforms: ['typescript'] }).code;
+    }
+
+    const logs: string[] = [];
+    const fmt = (a: unknown) => {
+      if (a instanceof Error) return a.name + ': ' + a.message;
+      if (typeof a === 'object' && a !== null) return JSON.stringify(a);
+      if (typeof a === 'undefined') return 'undefined';
+      return String(a);
+    };
+    const realLog = console.log;
+    console.log = (...args: unknown[]) => logs.push(args.map(fmt).join(' '));
+
+    try {
+      await new AsyncFunction(code)();
+      await new Promise((r) => setTimeout(r, 60));
+    } catch (err: any) {
+      fail(`review/${item.id}`, `snippet threw: ${err?.message ?? err}`);
+      continue;
+    } finally {
+      console.log = realLog;
+    }
+
+    const expected = item.expected ?? [];
+    if (JSON.stringify(logs.map((l) => l.trimEnd())) !== JSON.stringify(expected.map((l) => l.trimEnd()))) {
+      fail(
+        `review/${item.id}`,
+        `expected output does not match what the snippet prints\n        declared: ${JSON.stringify(expected)}\n        actual:   ${JSON.stringify(logs)}`
+      );
+      continue;
+    }
+
+    // The grader must accept the true output, and reject a near miss.
+    if (!matchesExpected(logs.join('\n'), expected)) {
+      fail(`review/${item.id}`, 'grader rejects the snippet\'s own output');
+    }
+    if (matchesExpected(logs.join('\n') + '\nextra', expected)) {
+      fail(`review/${item.id}`, 'grader accepts an answer with a spurious extra line');
+    }
+  }
+
+  return REVIEW_BANK.length;
+}
+
+const reviewChecked = await validateReviewBank();
+
+// Python predict items go through the real interpreter.
+function validatePythonPredictItems(): number {
+  const items = REVIEW_BANK.filter((i) => i.kind === 'predict' && i.language === 'python');
+  if (items.length === 0) return 0;
+
+  try {
+    execFileSync('python3', ['--version'], { stdio: 'ignore' });
+  } catch {
+    notes.push(`python3 not available — skipped ${items.length} Python review items`);
+    return 0;
+  }
+
+  const dir = mkdtempSync(join(tmpdir(), 'codelab-review-'));
+  try {
+    for (const item of items) {
+      const file = join(dir, `${item.id.replace(/[^a-z0-9]/gi, '_')}.py`);
+      writeFileSync(file, item.code ?? '');
+
+      let stdout = '';
+      try {
+        stdout = execFileSync('python3', [file], { encoding: 'utf8', cwd: dir, timeout: 20000 });
+      } catch (err: any) {
+        const stderr = String(err?.stderr ?? err?.message ?? err).trim();
+        fail(`review/${item.id}`, `python raised: ${stderr.split('\n').pop()}`);
+        continue;
+      }
+
+      const actual = stdout.replace(/\n$/, '').split('\n').filter((l, i, all) => l !== '' || i < all.length - 1);
+      const expected = item.expected ?? [];
+      if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+        fail(
+          `review/${item.id}`,
+          `expected output does not match what the snippet prints\n        declared: ${JSON.stringify(expected)}\n        actual:   ${JSON.stringify(actual)}`
+        );
+      }
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+
+  return items.length;
+}
+
+const reviewPythonChecked = validatePythonPredictItems();
+
+// ── Scheduler ────────────────────────────────────────────────
+
+function validateScheduler(): void {
+  const start = newReviewState(0);
+
+  // Correct answers must push the interval out, monotonically.
+  let state = start;
+  let previous = 0;
+  for (let i = 0; i < 8; i++) {
+    const now = 1_000_000 + i;
+    state = grade(state, true, now);
+    const interval = state.dueAt - now;
+    if (interval < previous) fail('scheduler', 'interval shrank after a correct answer');
+    previous = interval;
+  }
+  if (state.correct !== 8) fail('scheduler', 'correct answers were not tallied');
+
+  // A miss resets all the way to the shortest interval.
+  const missed = grade(state, false, 2_000_000);
+  if (missed.box !== 0) fail('scheduler', 'a miss did not reset the box');
+  if (missed.dueAt !== 2_000_000) {
+    fail('scheduler', 'a missed item is not immediately due again');
+  }
+
+  // Grading tolerance.
+  if (!matchesExpected('  5 \n 23 ', ['5', '23'])) fail('scheduler', 'grader is not whitespace-forgiving');
+  if (matchesExpected('5', ['5', '23'])) fail('scheduler', 'grader accepts a short answer');
+  if (matchesExpected('23\n5', ['5', '23'])) fail('scheduler', 'grader ignores line order');
+}
+
+validateScheduler();
+
 // ── Report ───────────────────────────────────────────────────
 
 const byKind = SEED_LESSONS.reduce<Record<string, number>>((acc, l) => {
@@ -446,7 +630,8 @@ console.log(
 console.log(`  verified ${testLessons.length} test-graded and ${consoleLessons.length} console solutions in ${timed}ms`);
 console.log(`  ran ${pythonChecked} Python lessons through CPython`);
 console.log(`  ran ${sqlChecked} SQL lessons against real SQLite`);
-console.log(`  type-checked ${tsChecked} TypeScript solutions with tsc\n`);
+console.log(`  type-checked ${tsChecked} TypeScript solutions with tsc`);
+console.log(`  review bank: ${reviewChecked} items, ${reviewPythonChecked} verified through CPython\n`);
 
 for (const note of notes) console.log(`  note: ${note}`);
 

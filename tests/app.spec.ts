@@ -205,3 +205,56 @@ test('resetting clears every trace of progress', async ({ page }) => {
   await page.getByRole('button', { name: 'Start learning' }).click();
   await expect(page.locator('.cm-content')).not.toContainText('mine');
 });
+
+test('review serves items from finished lessons and schedules them', async ({ page }) => {
+  // js-03 is complete, so its predict item is due; nothing else should appear.
+  await seedProgress(page, { completed: ['js-01-hello', 'js-03-numbers-strings'], xp: 30 });
+  await page.goto('/');
+
+  await expect(page.getByRole('button', { name: /Review \(\d+\)/ })).toBeVisible();
+  await page.getByRole('button', { name: /Review/ }).click();
+
+  // First item: type the output and commit before seeing the answer.
+  await expect(page.getByText('What does this print?')).toBeVisible();
+  const answer = page.locator('textarea');
+  await answer.fill('5\n23\n7');
+  await page.getByRole('button', { name: 'Check answer' }).click();
+
+  await expect(page.getByText(/✔ Correct/)).toBeVisible();
+  // The explanation is the teaching, so it must appear either way.
+  await expect(page.getByText(/is why "\+" is the operator that bites/)).toBeVisible();
+
+  await page.getByRole('button', { name: /Next|See results/ }).click();
+  await expect(page.getByText(/of \d+ correct/)).toBeVisible();
+
+  // Answering correctly pushes the item out of the due queue.
+  await page.getByRole('button', { name: 'Done' }).click();
+  await expect(page.getByRole('button', { name: /^🔁 Review$/ })).toBeVisible();
+});
+
+test('a wrong review answer is explained and comes back', async ({ page }) => {
+  await seedProgress(page, { completed: ['js-03-numbers-strings'] });
+  await page.goto('/');
+  await page.getByRole('button', { name: /Review/ }).click();
+
+  await page.locator('textarea').fill('completely wrong');
+  await page.getByRole('button', { name: 'Check answer' }).click();
+
+  await expect(page.getByText(/comes back in your next session/)).toBeVisible();
+  await expect(page.getByText('EXPECTED')).toBeVisible();
+
+  await page.getByRole('button', { name: /Next|See results/ }).click();
+  await expect(page.getByText('COMING BACK NEXT SESSION')).toBeVisible();
+
+  // Still due, because it was missed.
+  await page.getByRole('button', { name: 'Done' }).click();
+  await expect(page.getByRole('button', { name: /Review \(1\)/ })).toBeVisible();
+});
+
+test('review offers nothing when no lesson is finished', async ({ page }) => {
+  await seedProgress(page);
+  await page.goto('/');
+
+  await page.getByRole('button', { name: /Review/ }).click();
+  await expect(page.getByText('Nothing to review yet')).toBeVisible();
+});
